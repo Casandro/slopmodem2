@@ -1235,20 +1235,61 @@ between themselves.
 
 Byte-for-byte relaying, no transcoding, 4069 frames one way and 4068 the other.
 
-**What the capture does not tell us.** The negotiated line rate is unidentified.
-The modems report `CONNECT 115200`, which is the DTE speed, and adding `ATW1` for
-a second run produced `+ER: LAPM` but still no `+MCR`/`+MRR`. Replaying the B leg
-through our own receiver does not settle it either: assuming 4800, 9600
-non-redundant or 9600 trellis all give a collapsed eye, 10 to 19% of symbols
-within tolerance, so the receiver never converged on any of the three and the
-result says nothing about which is right. Naively feeding `_Rx` the capture also
-produced three mutually inconsistent V.32bis rate signals within a second of each
-other, which is a misread and not a measurement.
+### What they negotiated: 9600 with trellis coding
 
-So: the modems interoperate over our bridge at 100% in both directions with V.42
-between them, and the captures are on disk. Which of V.32's modulations they
-chose is an open question, and the honest answer is that this run did not
-establish it.
+The modems do not say. `CONNECT 115200` is the DTE speed, and `ATW1` on a second
+run produced `+ER: LAPM` but no `+MCR`/`+MRR`. So it had to come out of the
+capture, and the first attempt failed in a way worth recording: replaying the
+B leg under 4800, 9600 non-redundant and 9600 trellis gave a collapsed eye for
+all three, 10 to 19% of symbols within tolerance, which reads like "none of these
+is the mode".
+
+It was not. The mode was among them and the *start times were wrong* — a guess of
+`--trn 14.6 --data 16.0`, when the rate signal actually runs from 14.44 to 16.14 s
+and TRN is back around 11 s. So the equaliser was being trained on the rate signal
+instead of on the segment 5.2.3 provides for exactly that purpose, and a
+receiver that never converges says nothing about the constellation it was pointed
+at. "None of the candidates fits" and "the harness was misconfigured" produce the
+same collapsed eye.
+
+Decoded properly, both ends state it themselves. Sweeping the acquisition point so
+the equaliser trains on TRN, and descrambling each leg with the generator its
+sender uses — GPC for the calling modem, GPA for the answering one:
+
+| | rate signal | signal E |
+|---|---|---|
+| A, Cirrus, GPC | `[9600]`, trellis, not V.32bis — **509 consecutive identical parses** | 16.14 s |
+| B, Conexant, GPA | `[9600]`, trellis, not V.32bis | 16.20 s |
+
+The V.32bis readings that appeared earlier — 7200/12000/14400 and the like — turn
+up only when a leg is descrambled with the *wrong* generator, three to seven
+parses that disagree with each other. Self-consistency across 509 of them is the
+difference between a measurement and a misread.
+
+And then the data phase confirms it end to end. Switching to the 32-point set at
+signal E + 128T:
+
+| | eye median | within 0.35 | HDLC frames | bad FCS | pattern recovered |
+|---|---|---|---|---|---|
+| A: Cirrus to Conexant | **0.042** | **100.0%** | 1224 | 21 | **952 x** `SLOPBRIDGE-A ` |
+| B: Conexant to Cirrus | 0.528 | 23.6% | 269 | 1824 | 197 x `SLOPBRIDGE-B ` |
+
+So: **V.32 at 9600 bit/s, trellis coded**, and the DTE pattern of a real
+modem-to-modem LAPM link read back out of the air through our own deframer.
+
+### The Conexant's transmitter is the weaker one, measured cleanly
+
+The asymmetry in that table is not a timing artefact — the B leg was decoded from
+its *own* signal E, and the two legs arrive 1 dB apart (−24.4 and −25.4 dBFS).
+A median error of 0.042 against 0.528 is a factor of twelve, through the same
+receiver, on the same modulation, over the same box.
+
+This corroborates an attribution made earlier by a different route, where the
+12.9% residual at 12000 was put down to the Conexant's transmitter because the
+Cirrus's signal read 1.3% through the same receiver. A bridge capture is the
+cleaner instrument for that claim: neither signal has passed through *our*
+transmitter, so what is being compared is two modems' transmitters and nothing
+else.
 
 ## The rate-signal eye, and one frame
 
