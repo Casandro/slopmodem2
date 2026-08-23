@@ -968,10 +968,10 @@ class _Base:
         self.t += FRAME / float(SR)
         if self.echo is not None:
             # Cancel before anything looks at the samples: the echo pollutes the
-            # handshake's tone detectors as much as it pollutes the eye. The
-            # canceller runs one frame behind -- see echo.HOLD -- so what the
-            # rest of the state machine sees is 20 ms older than the wire, the
-            # same as a little more network delay.
+            # handshake's tone detectors as much as it pollutes the eye. Nothing
+            # is held back -- the echo cannot return in less than one frame, so
+            # the newest transmit sample the filter ever needs is the one just
+            # pushed, and the canceller adds no delay of its own.
             #
             # Pad to a whole frame first. The canceller lines its two streams up
             # by sample index, and the 1:1 RTP pacing normally keeps them level
@@ -980,12 +980,24 @@ class _Base:
             # and put a permanent offset between them. That is silent: the
             # search simply stops finding the echo. Padding with silence keeps
             # the two clocks locked, and silence is what was actually received.
+            #
+            # The padding is for the canceller alone, though, and must not reach
+            # the receiver. rtp.pump primes two frames before any inbound
+            # exists, so padding those and passing them on fed the receiver 320
+            # samples of silence that the canceller-off path never sees, and put
+            # every received symbol index 96T out of step with our own transmit
+            # clock -- across 5.4's turn-round, which is 64T. So slice the
+            # invented samples back off before anyone looks at them.
+            # At least one whole frame, and a whole number of them: an empty
+            # inbound frame still has to advance the canceller's receive clock,
+            # or transmit runs ahead of it for the rest of the call.
             n = len(inbound)
-            if n < FRAME:
-                inbound = list(inbound) + [0.0] * (FRAME - n)
-            elif n > FRAME:
-                inbound = inbound[:FRAME]
+            pad = FRAME * max(1, (n + FRAME - 1) // FRAME) - n
+            if pad:
+                inbound = list(inbound) + [0.0] * pad
             inbound = self.echo.feed(inbound)
+            if pad:
+                inbound = inbound[:len(inbound) - pad]
         self._on_frame(inbound)
         # The receiver is fed continuously, but it only *adapts* on TRN and on
         # what follows it. 5.2.3 says outright that "segment 3 is intended for
@@ -1139,7 +1151,17 @@ class AnswerStartup(_Base):
         if self.state != R3TX:
             self._ev("R3: selecting %s bit/s from %s"
                      % (pick, sorted(self.r2["rates"])))
-            self._rescan()              # now waiting for the caller's E
+            # No rescan here, unlike the caller's _start_r2. 5.4.1's timing
+            # diagram has the caller sending one S S-bar TRN R2, and then E and
+            # B1 straight on the end of it -- no silence, no retrain, no gap. The
+            # alignment established while detecting R2 is therefore exactly the
+            # alignment E arrives on, and wiping it started a race we sometimes
+            # lost: E is a *single* 16-bit sequence, accepted only when aligned,
+            # so re-aligning first needs two more R2 sequences before the caller
+            # stops sending them. When the caller won that race the E was never
+            # seen and the call sat in R3TX until the far end gave up. The
+            # caller's own rescan stays, because there the answerer really does
+            # retrain between R1 and R3.
             self._goto(R3TX, "(rate signal R3)")
         # 5.4.2: R3 calls for the coding too. Trellis needs both ends to have
         # it, so R2's B8 has to agree with our own capability.

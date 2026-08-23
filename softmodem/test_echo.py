@@ -163,7 +163,7 @@ if __name__ == "__main__":
           "locked %s, best rho %.3f" % (sub.locked, sub.best_rho))
 
     print()
-    print("a real echo: 9.6 ms at 19 dB down, both ends talking")
+    print("a real echo: 29.6 ms at 19 dB down, both ends talking")
     N = 8000 * 20
     far = v32ish(N, 1)
     near = v32ish(N, 2)
@@ -251,6 +251,91 @@ if __name__ == "__main__":
     check("  disabled, it costs nothing and touches nothing",
           len(gotA) > 0 and not ecA.locked and ecA.searches == 0
           and max(abs(v) for v in ecA.w) == 0.0)
+
+    print()
+    print("in the state machine, it must be invisible until it locks")
+    # The canceller once cost the Cirrus dial-in three attempts out of three
+    # while reporting |w|max 0.0000 -- it had never adapted, so it could not
+    # have changed a sample. What changed was the padding around it: step() pads
+    # a short inbound frame to a whole one so the canceller's two streams stay
+    # index-locked, and passed the padded frame on to the receiver. rtp.pump
+    # primes two frames before any inbound exists, so the receiver was fed 320
+    # samples of invented silence and every received symbol index came out 96T
+    # out of step with our own transmit clock -- across a 64T turn-round.
+    #
+    # So the property to assert is not about the filter at all: with no echo to
+    # find, having the canceller in the path must change nothing whatsoever.
+    import g711
+    import v32fsm
+
+    frames = [g711.encode(v32ish(160, 900 + i, amp=1500.0), 8)
+              for i in range(400)]
+
+    def call(cancel):
+        m = v32fsm.AnswerStartup(level_dbfs=-24.0, ans_s=0.2,
+                                 rates=(4800, 9600), trn=1280,
+                                 cancel_echo=cancel)
+        tx = bytearray()
+        # rtp.pump's priming burst: two frames with no inbound at all, then a
+        # short one, which is what a dropout looks like.
+        for f in [[], [], v32ish(64, 7, amp=1500.0)]:
+            out = m.step(f)
+            tx.extend(g711.encode(out, 8) if out else b"\xD5" * 160)
+        for f in frames:
+            out = m.step(g711.decode(f, 8))
+            tx.extend(g711.encode(out, 8) if out else b"\xD5" * 160)
+        return m, bytes(tx)
+
+    a, txa = call(False)
+    b, txb = call(True)
+    check("  never locked, so there is nothing it could legitimately change",
+          b.echo is not None and not b.echo.locked
+          and max(abs(v) for v in b.echo.w) == 0.0)
+    check("  the same events fire, in the same order, at the same symbol counts",
+          [(round(t, 4), st, msg) for t, st, msg in a.events]
+          == [(round(t, 4), st, msg) for t, st, msg in b.events],
+          "%d events off, %d on" % (len(a.events), len(b.events)))
+    check("  and not one transmitted sample differs",
+          txa == txb and len(txa) > 0,
+          "%d bytes, %d differ"
+          % (len(txa), sum(1 for i in range(min(len(txa), len(txb)))
+                           if txa[i] != txb[i])))
+    check("  the priming frames reach the receiver as empty, not as silence",
+          len(txa) == len(txb))
+
+    # A synthetic caller only gets the state machine a couple of events in. If a
+    # real capture happens to be lying around -- ref/v32if_* is gitignored,
+    # being megabytes of one phone call -- replay it too, which exercises the
+    # whole start-up and is where the 96T offset was actually caught.
+    import os
+    cap = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "ref", "v32if_rx.raw")
+    if os.path.exists(cap):
+        raw = open(cap, "rb").read()
+        real = [raw[i:i + 160] for i in range(0, len(raw) - 159, 160)]
+
+        def replay(cancel):
+            m = v32fsm.AnswerStartup(level_dbfs=-24.0, ans_s=3.3,
+                                     rates=(4800, 9600), trn=1280, ec=True,
+                                     cancel_echo=cancel)
+            tx = bytearray()
+            for _ in range(2):
+                out = m.step([])
+                tx.extend(g711.encode(out, 8) if out else b"\xD5" * 160)
+            for f in real:
+                out = m.step(g711.decode(f, 8))
+                tx.extend(g711.encode(out, 8) if out else b"\xD5" * 160)
+            return m, bytes(tx)
+
+        c, txc = replay(False)
+        d, txd = replay(True)
+        check("  and the same holds replaying a real call end to end",
+              txc == txd
+              and [(round(t, 4), st, m) for t, st, m in c.events]
+              == [(round(t, 4), st, m) for t, st, m in d.events],
+              "%d events, %d frames" % (len(c.events), len(real)))
+    else:
+        print("  (no ref/v32if_rx.raw -- skipping the real-call replay)")
 
     print()
     if FAIL:

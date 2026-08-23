@@ -2523,6 +2523,49 @@ call, another transmitter — and each time the single-reference reading pointed
 our own code. One measurement against one peer cannot tell you which end owns a
 defect, however carefully it is made.
 
+## The race for signal E
+
+Dial-in from the Cirrus was reaching the data phase about three times in four. The
+failures all looked the same: R3 goes out, and then nothing for the remaining
+thirty-five seconds.
+
+```
+[ 9.171] HUNT2   R2 received: rates [9600] trellis False
+[ 9.172] HUNT2   -> RC2 (107 on; second conditioning signal)
+[ 9.810] RC2     R3: selecting 9600 bit/s from [9600]
+[ 9.810] RC2     -> R3TX (rate signal R3)
+```
+
+A successful call is identical line for line up to that point and then reads
+`[ 9.915] R3TX incoming E: 9600 bit/s` — 101 ms later. So the difference is
+entirely in whether we see the caller's E, and E does not come round again.
+
+`_start_r3` was calling `_rescan()`, which throws away the `RateScanner`'s bit
+alignment. That is right on the *call* side, where `_start_r2` does the same
+thing: there the answerer transmits `S S-bar TRN R3` between R1 and R3, so an
+alignment established on R1 really is stale by the time R3 arrives, and holding it
+meant R3 was never seen at all.
+
+The answer side is not symmetric. §5.4.1's sequence has the caller send one
+`S S-bar TRN R2` and then E and B1 straight onto the end of it — no silence, no
+retrain, no gap. The alignment established while detecting R2 is therefore exactly
+the alignment E arrives on, and wiping it started a race. §5.3.2 makes E a
+*single* 16-bit sequence, and the scanner accepts a lone sequence only once
+aligned (it has to: accepting an unaligned one lets a chance pattern inside TRN
+lock the scanner to the wrong phase for the rest of the call). Re-aligning
+therefore needs **two more R2 sequences** — and the caller stops sending R2 as
+soon as it has read our R3, which takes it two sequences of its own. Sometimes we
+won that race by 101 ms. Sometimes the caller won it, and E was gone.
+
+Deleting one line took the answer side from 3-in-4 to 3-in-3. The general shape is
+worth keeping: a signal that is sent *once* cannot be behind a resynchronisation
+that takes longer than the window it arrives in.
+
+What made it findable was having a failure in the arm that was supposed to be the
+control. The stall had been provisionally blamed on the echo canceller, and the
+canceller-off arm failing once is what showed it could not be — see
+`echo-cancellation.md`, which also has the canceller's own separate bug.
+
 ## Still not built
 - **V.32bis §8, rate renegotiation.** The rates, the coding and the rate signal
   are built; the procedure for changing rate mid-call is not. It has its own

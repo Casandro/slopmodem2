@@ -195,3 +195,45 @@ It cancels one bulk-delayed reflection. The rig's secondary reflections at 61 an
 step size is simply chosen to survive permanent double talk, which is cheaper and
 has no failure mode of its own. And a moving echo delay would need a re-search,
 which only happens today if the guard notices the filter hurting.
+
+## Transparency before lock, which it did not have
+
+With `HOLD = 0` the pad correction above is moot — `rx_delay_T()` returns 0 and the
+turn-round is a plain 64 T again — but the Cirrus dial-in was still failing with
+the canceller in the path. Eight interleaved 45-second runs, four per arm:
+
+| | reached DATA | stalled in R3TX | dial failed |
+|---|---|---|---|
+| canceller off | 3 | 1 | 0 |
+| canceller on | 1 | 2 | 1 |
+
+The canceller-off arm *also* stalled, which is what made the stall findable — it
+was a separate bug, in `_start_r3`, written up in `v32-ans-path.md`. But after
+fixing that the arms separated cleanly, 3/3 against 0/3, while the canceller
+reported `|w|max 0.0000` and `0 resets`: it had never locked, never adapted, and
+by construction was passing every sample through untouched. A filter of all zeros
+cannot change a handshake, so something else about having it in the path did.
+
+It was not the filter. It was the padding around it. `step()` pads a short inbound
+frame up to a whole frame before calling `feed()`, because the canceller lines its
+two streams up by absolute sample index and a frame with no inbound audio would
+otherwise advance transmit without advancing receive — a silent, permanent offset
+that simply stops the search finding anything. That part is right. What was wrong
+is that the padded frame was then passed on to the receiver.
+
+`rtp.pump` primes two frames before any inbound exists. So with the canceller in
+the path the receiver was fed **320 samples of invented silence** that the
+canceller-off path never sees, and every received symbol index came out 96 T out
+of step with our own transmit clock — across a turn-round that §5.4 specifies as
+64 ± 2 T. The fix is one line: slice the invented samples off `feed()`'s return
+before anyone looks at them. The canceller keeps the zeros internally, where they
+belong, and the receiver sees exactly what arrived.
+
+An offline A/B on a captured call now reports **identical event logs and zero
+differing transmitted samples** between canceller-off and canceller-on, which is
+the property that should have been asserted from the start: before it locks, the
+canceller must be provably invisible.
+
+The same experiment measures the cost: **0.98 ms per frame without, 2.36 ms with**,
+worst case 9.8 ms against a 20 ms budget. The scan is most of that, and it runs on
+every frame of the handshake.
