@@ -1216,6 +1216,40 @@ FAILs became real passes. Recording the convergence *time* rather than a
 pass/fail is what made the pattern visible: three cases, one monotone
 relationship, one cause.
 
+### The bridge, re-run with V.42 left on
+
+Worth doing again now that V.42 exists on our side: put both modems in a call
+with each other through the bridge, leave error correction alone, and watch two
+real implementations negotiate it.
+
+Both forced to `AT+MS=V32,0,9600,9600`, compression off (`%C0` and `"H0` on the
+Cirrus; `S46=136` is an ERROR there, as documented, and applies to the Conexant).
+The Conexant reports **`+ER: LAPM`** at its DTE, so the two of them agree on V.42
+between themselves.
+
+| | A: Cirrus to Conexant | B: Conexant to Cirrus |
+|---|---|---|
+| delivered | 12 376 bytes | 11 778 bytes |
+| correct | **100.000%** | **100.000%** |
+| captured | `ref/br2_a.raw`, 81.4 s, −24.4 dBFS | `ref/br2_b.raw`, 81.4 s, −25.4 dBFS |
+
+Byte-for-byte relaying, no transcoding, 4069 frames one way and 4068 the other.
+
+**What the capture does not tell us.** The negotiated line rate is unidentified.
+The modems report `CONNECT 115200`, which is the DTE speed, and adding `ATW1` for
+a second run produced `+ER: LAPM` but still no `+MCR`/`+MRR`. Replaying the B leg
+through our own receiver does not settle it either: assuming 4800, 9600
+non-redundant or 9600 trellis all give a collapsed eye, 10 to 19% of symbols
+within tolerance, so the receiver never converged on any of the three and the
+result says nothing about which is right. Naively feeding `_Rx` the capture also
+produced three mutually inconsistent V.32bis rate signals within a second of each
+other, which is a misread and not a measurement.
+
+So: the modems interoperate over our bridge at 100% in both directions with V.42
+between them, and the captures are on disk. Which of V.32's modulations they
+chose is an open question, and the honest answer is that this run did not
+establish it.
+
 ## The rate-signal eye, and one frame
 
 Every remaining caller-side defect turned out to be one frame long.
