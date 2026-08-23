@@ -1324,6 +1324,43 @@ delivered 100.000% in both directions, and not 14400, which negotiates and then
 cannot be relied on. That is a property of the Conexant's transmitter, not of the
 rate: the same 14400 in the other direction is clean.
 
+### Checking that claim properly: swap the legs and repeat
+
+The claim above rested on one call, and it was confounded. Each direction of a
+bridged call uses *one leg's receive path and the other leg's send path*, so "the
+Conexant's capture will not decode" is equally consistent with the Conexant's
+transmitter being weak and with our leg-B receive being noisy. And the modems'
+own DTE figures cannot settle it either, because every pairing changes the
+transmitter *and* the receiver at once: "Conexant to Cirrus is bad" fits a weak
+Conexant transmitter exactly as well as a weak Cirrus receiver.
+
+Two things fix the experiment. Swap which modem sits on which leg, and judge the
+transmitted signal with a *fixed* third-party receiver — ours — which sees only
+the transmit side. Three runs per configuration:
+
+| | on leg A | on leg B | clean eyes |
+|---|---|---|---|
+| **Cirrus transmit** | 0.122/100%, 0.587/72%, 0.189/100% | 0.561/76%, 0.082/100%, 0.086/100% | **4 of 6** |
+| **Conexant transmit** | 0.581/74%, 0.581/74%, 0.588/73% | no signal E, no signal E, 0.844/69% at 12000 | **0 of 6** |
+
+The Conexant never once puts a cleanly decodable 14400 signal on the line: 0.581
+± 0.004 across three leg-A runs, undecodable twice on leg B, and in one run it had
+already fallen back to 12000. The Cirrus manages a clean eye four times out of
+six, with medians down to 0.082. The ordering holds within each leg taken
+separately, so it is not the leg assignment.
+
+So the claim stands — **the Conexant's transmitter is the weaker one** — but it
+took a swapped 2x2 with replicates to earn it, and the single-run version was not
+evidence.
+
+Two things the same data says that the claim does not. The Cirrus is poor in two
+of its six runs, so the path contributes variance of its own and the Conexant's
+transmitter is not the only impairment here. And at the DTE the numbers are
+beautifully reproducible in one direction — 58.86% ± 0.04 across three runs, and
+98.87% ± 0.01 across three others — while the opposite direction of the same
+configuration scatters from 30% to 65%. Reproducibility to four significant
+figures on one side of a link says nothing about the other.
+
 ### The Conexant's transmitter is the weaker one, measured cleanly
 
 The asymmetry in that table is not a timing artefact — the B leg was decoded from
