@@ -1277,6 +1277,53 @@ signal E + 128T:
 So: **V.32 at 9600 bit/s, trellis coded**, and the DTE pattern of a real
 modem-to-modem LAPM link read back out of the air through our own deframer.
 
+### The rate I measured was the rate I had asked for
+
+The run above was set up with `AT+MS=V32,0,9600,9600` — modulation V.32, automode
+off, minimum 9600, maximum 9600. That caps the rate. So "what did they negotiate"
+had the answer written into the question, and 509 self-consistent parses of
+`[9600] trellis` measured my own setup string. The decode was sound; the
+conclusion drawn from it was not a finding about the line.
+
+Reset and asked again. `AT&F` on both, then `AT+MS=?`:
+
+| | after `AT&F` | supported |
+|---|---|---|
+| Cirrus CL-MD56xx | `V90,1,0,0` | `AT+MS=?` returns ERROR, but writes are accepted |
+| Conexant CX93001 | `V92,1,300,48000,300,56000` | `B103,B212,V21,V22,V22B,V23C,V32,V32B,V34,V90,V92,ALM1,ALM2` |
+
+Both default to V.90/V.92 automode, and the V.32bis token is `V32B`. Both accept
+`AT+MS=V32B,0,4800,14400` and read it back.
+
+### At 14400 the Conexant's transmitter gives out
+
+With the cap lifted they negotiate the top rate, and the Cirrus's signal E says so
+outright:
+
+| | rate signal | signal E | data phase at 14400 |
+|---|---|---|---|
+| A, Cirrus, GPC | `[14400]` V.32bis, 503 consecutive identical parses | 16.22 s | median **0.122**, 90th 0.222, **100.0%** inside d_min/2 = 0.707 |
+| B, Conexant, GPA | offers `[4800, 7200, 9600, 12000, 14400]` | none seen | **would not decode** |
+
+At the modems' own DTEs, with error correction unavailable: 98.9% correct in the
+A-to-B direction and **47.3%** in the B-to-A direction.
+
+So the line does carry 14400 — one way. The Cirrus's 128-point signal arrives with
+every symbol inside its decision boundary and a median error a sixth of the way to
+it. The Conexant's does not arrive usably at all: not at its peer's DTE, and not
+through our own receiver either.
+
+That also explains `+ER: NONE`, which persisted even with `\N3` set on both
+modems and `&Q5`/`S48=7` accepted by the Conexant. V.42's detection phase is an
+exchange — ODP one way, ADP the other, as asynchronous characters. One direction
+running at half its characters correct cannot complete it, so both ends give up on
+error correction and hand the corruption straight to the DTE.
+
+The usable configuration on this rig is therefore **9600 with V.42**, which
+delivered 100.000% in both directions, and not 14400, which negotiates and then
+cannot be relied on. That is a property of the Conexant's transmitter, not of the
+rate: the same 14400 in the other direction is clean.
+
 ### The Conexant's transmitter is the weaker one, measured cleanly
 
 The asymmetry in that table is not a timing artefact — the B leg was decoded from
