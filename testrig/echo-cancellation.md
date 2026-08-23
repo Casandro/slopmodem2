@@ -269,6 +269,19 @@ correlation, so the first data-phase scan is not half made of handshake tones; t
 state machine calls it whenever the state is not `DATA`, which also re-suspends it
 across a retrain.
 
+Seven interleaved pairs afterwards:
+
+| | reached DATA |
+|---|---|
+| canceller off | 4 / 7 |
+| canceller on | 6 / 7 |
+
+Indistinguishable (p = 0.56), where before the gate it was 9/9 against 1/9. The
+canceller is not disabled by this, only deferred: those calls still completed
+three searches each inside the data phase. And the residual failures are now
+symmetric — whatever the remaining third is, both arms have it, which is what a
+line problem looks like and what a code problem does not.
+
 The general lesson is the one this rig keeps teaching in different costumes: a
 measurement that cannot complete inside the window it is measuring is not a
 cheap measurement, it is a pure cost.
