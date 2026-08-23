@@ -95,6 +95,12 @@ MT_DEFAULT = 64             # the turn-round delay alone, when we have nothing
 # signal and R2 on its own schedule, so a CA segment measured in seconds means
 # the reversal was missed and the rest of the handshake has already gone past.
 CA_MAX = 2400               # 1 s
+# 5.3.2 makes signal E a *single* 16-bit sequence, which at 2 bits per symbol is
+# eight symbols -- a 3.3 ms window, once, and then the caller is in B1 at a
+# different rate and a different constellation. Miss it and there is nothing left
+# to detect, so R3TX has to be able to give up and retrain rather than sit there.
+# Measured, E arrives 75 to 100 ms after R3 begins; a second is not marginal.
+E_MAX = 2400                # 1 s of R3 with no E
 
 RETRAIN_TONE = 128
 # 5.5 also permits a retrain on "unsatisfactory signal reception", which is
@@ -782,6 +788,7 @@ class _Base:
         self.r1 = None
         self.r2 = None
         self.r3 = None
+        self.r3_sym = None
         self.e_seen = False
         self.e_wait = 0
         self.seg_base = self.tx.nsym
@@ -967,6 +974,25 @@ class _Base:
     def step(self, inbound):
         self.t += FRAME / float(SR)
         if self.echo is not None:
+            # Search only in the data phase. The bulk-delay scan costs about
+            # 1.4 ms of every 20 ms frame, and during start-up it cannot possibly
+            # earn that back: 640 lags at one lag per frame is 12.8 s, longer
+            # than the whole handshake, so it never reaches a verdict before the
+            # phase it is running in has ended. What it does reach is the timing.
+            # Measured on the Cirrus dial-in, 9 of 9 calls made the data phase
+            # with no canceller and 4 of 4 with the canceller present but not
+            # scanning, against 1 of 9 with it scanning -- and the samples were
+            # provably identical in all three, because the filter never locked.
+            #
+            # Correlating start-up would be a poor bargain even if it were free.
+            # A delay estimate wants one long stationary stretch; 5.4 is a dozen
+            # short segments with different spectra. The data signal is scrambled
+            # and stationary, which is what the estimator was designed for.
+            if self.state == DATA:
+                self.echo.budget = self.echo_budget
+            elif self.echo.budget:
+                self.echo.budget = 0
+                self.echo.defer_search()
             # Cancel before anything looks at the samples: the echo pollutes the
             # handshake's tone detectors as much as it pollutes the eye. Nothing
             # is held back -- the echo cannot return in less than one frame, so
@@ -1095,6 +1121,8 @@ class AnswerStartup(_Base):
         self.want_ec = bool(ec)
         if cancel_echo:
             self.echo = echomod.EchoCanceller(budget=echo_budget)
+            self.echo_budget = echo_budget
+            self.echo.budget = 0        # 5.4 first; see the gate in step()
         if bis:
             # every V.32bis rate is trellis coded, so offering
             # them is offering the coding
@@ -1112,6 +1140,7 @@ class AnswerStartup(_Base):
         self.ac_sent = 0.0
         self.quiet_run = 0
         self.r2 = None
+        self.r3_sym = None
         self.saw_far_S = False
         self.wait_until = None
 
@@ -1163,6 +1192,7 @@ class AnswerStartup(_Base):
             # caller's own rescan stays, because there the answerer really does
             # retrain between R1 and R3.
             self._goto(R3TX, "(rate signal R3)")
+            self.r3_sym = self.tx.nsym
         # 5.4.2: R3 calls for the coding too. Trellis needs both ends to have
         # it, so R2's B8 has to agree with our own capability.
         # V.32bis: every rate above 4800 is trellis coded, so the coding follows
@@ -1320,6 +1350,16 @@ class AnswerStartup(_Base):
                 self._goto(WAITMT)
                 self.tx.set("quiet", count=max(1, int(self.mt or 64)),
                             on_done=lambda m: m._after_mt())
+        elif st == R3TX:
+            waited = self.tx.nsym - (self.r3_sym or self.tx.nsym)
+            if waited >= E_MAX and self.retrains < RETRAIN_MAX:
+                # The caller has either not read our R3 or has read it, sent its
+                # eight symbols of E, and moved on without us. Either way there
+                # is no signal left to wait for, and 5.5.2 is the way back:
+                # transmit AC and pick 5.4.2 up at its third paragraph. The
+                # caller is in its own data phase by now, so our carrier state
+                # is exactly what its 5.5.1 trigger is watching for.
+                self._retrain_answer("no E after %.0fT of R3" % waited)
         elif st == DATA:
             why = self._retrain_trigger(e, tone)
             if why:
@@ -1373,6 +1413,8 @@ class OriginateStartup(_Base):
         self.want_ec = bool(ec)
         if cancel_echo:
             self.echo = echomod.EchoCanceller(budget=echo_budget)
+            self.echo_budget = echo_budget
+            self.echo.budget = 0        # 5.4 first; see the gate in step()
         if bis:
             # every V.32bis rate is trellis coded, so offering
             # them is offering the coding

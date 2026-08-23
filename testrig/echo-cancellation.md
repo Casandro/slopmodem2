@@ -235,5 +235,40 @@ the property that should have been asserted from the start: before it locks, the
 canceller must be provably invisible.
 
 The same experiment measures the cost: **0.98 ms per frame without, 2.36 ms with**,
-worst case 9.8 ms against a 20 ms budget. The scan is most of that, and it runs on
+worst case 9.8 ms against a 20 ms budget. The scan is most of that, and it ran on
 every frame of the handshake.
+
+## The scan does not belong in the handshake
+
+Transparency was necessary and not sufficient. With the samples proven identical
+the arms still separated:
+
+| | reached DATA |
+|---|---|
+| canceller off | 9 / 9 |
+| canceller on, scanning | 1 / 9 |
+| canceller on, `--echo-budget 0` | 4 / 4 |
+
+Scanning against not scanning is p ≈ 0.003. Since the filter never locked in any
+of those calls and the sample streams were bit-identical, the only thing the scan
+could have been spending was time — and it could not have earned it back. A full
+pass is 640 lags at one lag per frame: **12.8 s, longer than the whole
+handshake**. It never reaches a verdict before the phase it is running in has
+ended, and start-up is the part of the call with the tightest timing — §5.4's
+64 ± 2 T turnarounds, and signal E's eight-symbol window.
+
+Correlating start-up would be a poor bargain even if it were free. A
+cross-correlation delay estimate wants one long stationary stretch; §5.4 is a
+dozen short segments — answer tone, AC, CA, S, S-bar, TRN, rate sequences — each
+with its own spectrum. The data signal is scrambled and stationary, which is what
+the estimator was built for.
+
+So the search now runs only in the data phase. `defer_search()` drops any
+part-finished scan and sets a floor on how old a sample may be to enter a
+correlation, so the first data-phase scan is not half made of handshake tones; the
+state machine calls it whenever the state is not `DATA`, which also re-suspends it
+across a retrain.
+
+The general lesson is the one this rig keeps teaching in different costumes: a
+measurement that cannot complete inside the window it is measuring is not a
+cheap measurement, it is a pure cost.

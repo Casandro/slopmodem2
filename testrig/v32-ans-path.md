@@ -2566,6 +2566,31 @@ control. The stall had been provisionally blamed on the echo canceller, and the
 canceller-off arm failing once is what showed it could not be — see
 `echo-cancellation.md`, which also has the canceller's own separate bug.
 
+## And a window eight symbols wide
+
+The race above was one way to miss signal E. It is worth being precise about why
+missing it was fatal, because the answer changes what the code has to do about it.
+
+§5.3.2 makes E a **single** 16-bit sequence. At two bits per symbol that is eight
+symbols — 3.3 ms — sent once, after which the caller is transmitting B1 at the
+negotiated rate, in a different constellation. There is no repetition to fall back
+on and no second chance. Measured on the rig, E arrives 75 to 100 ms after R3
+starts, and in the calls that failed it never arrived at all.
+
+R3TX had no timeout, so a missed E meant sitting in R3TX transmitting R3 until the
+call was torn down — thirty-five seconds of a forty-five second call, spent waiting
+for a signal that had already been and gone. §5.5.2 is the way out: transmit AC
+for an even number of symbol intervals not less than 128, then pick §5.4.2 up at
+its third paragraph, which is what the `AC1` state already is. And it composes,
+because by then the caller is in its own data phase, where a held carrier state is
+exactly what its §5.5.1 trigger is watching for. So our retrain pulls it back into
+the handshake with us.
+
+R3TX now gives up after 2400 T of R3 with no E — one second, against a 75-to-100 ms
+expectation, so nowhere near marginal — and retrains, under the same
+`RETRAIN_MAX` cap as every other retrain. A missed eight-symbol window costs a
+handshake instead of the call.
+
 ## Still not built
 - **V.32bis §8, rate renegotiation.** The rates, the coding and the rate signal
   are built; the procedure for changing rate mid-call is not. It has its own

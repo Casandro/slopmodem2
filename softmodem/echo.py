@@ -1,8 +1,8 @@
 """Echo cancellation for the soft modem.
 
 V.32 is full duplex on one circuit, so a modem hears itself. On this rig the
-FRITZ!Box's analogue hybrid returns our own signal about 9.6 ms later at roughly
-19 dB down -- measured, see `testrig/sip-audio-path.md` -- and with no canceller
+FRITZ!Box's analogue hybrid returns our own signal 50 to 66 ms later at roughly
+19 dB down -- measured, see `testrig/echo-cancellation.md` -- and with no canceller
 that echo is the dominant noise source in our own receiver. It is why 9600 with
 trellis coding has no margin to spare here: at any transmit level either the far
 end cannot decode a 32-point constellation or our own echo drowns its reply.
@@ -55,11 +55,13 @@ SPAN = 32           # taps, once the bulk delay is known
 # 9.6 ms, which would have the echo arriving before it was transmitted.
 SEARCH_MIN = FRAME
 # The echo delay is NOT a property of the rig, it is a property of the call.
-# Three consecutive connections put it at 77, 205 and 461 samples -- 9.6, 25.6 and
-# 57.6 ms -- because the loop includes the FRITZ!Box's jitter buffer and whatever
-# frame alignment the call happens to settle on. A range tuned to the first
-# measurement missed the second entirely, and 461 came within 8% of the second
-# guess, so this covers 100 ms and pays for the extra lags with a long window.
+# Four consecutive connections put it at 397, 461, 493 and 525 samples -- 50 to
+# 66 ms -- because the loop includes the FRITZ!Box's jitter buffer and whatever
+# frame alignment the call happens to settle on. (Two of those were first read off
+# capture files as 77 and 205; rtp.pump emits two priming frames before any
+# inbound exists, so every file-derived lag was 320 samples short. The scan log
+# was never affected.) This covers 100 ms and pays for the extra lags with a long
+# window.
 # Widening costs threshold margin as sqrt(ln L), which is cheap; guessing the
 # range costs the whole feature.
 SEARCH_MAX = 800
@@ -168,6 +170,7 @@ class EchoCanceller:
         self.gn = 0
 
         self.scan_r = None          # the snapshot being scanned
+        self.scan_floor = 0         # correlate nothing older than this index
         self.scan_t = None
         self.scan_lag = 0
         self.scan_best = (0.0, None)
@@ -211,6 +214,27 @@ class EchoCanceller:
 
     # -- the search -----------------------------------------------------
 
+    def defer_search(self):
+        """Drop any part-finished scan, and correlate nothing recorded before
+        now.
+
+        The caller is the one that knows when the line is worth correlating. A
+        cross-correlation delay estimate wants a long stationary stretch, and a
+        V.32 start-up is the opposite of that: a dozen short segments -- answer
+        tone, AC, CA, S, TRN, rate sequences -- each with its own spectrum. It is
+        also the part of the call with the tightest timing, and a scan costs
+        about 1.4 ms of every 20 ms frame.
+
+        Measured, on the Cirrus dial-in: 9 of 9 calls reached the data phase with
+        no canceller, 4 of 4 with the canceller in the path but not scanning, and
+        1 of 9 with it scanning. The samples were provably identical in all three
+        -- the filter never locked -- so what the scan was costing was time, and
+        it could not have paid it back: 640 lags at one lag per frame is 12.8 s,
+        longer than the whole handshake.
+        """
+        self.scan_r = None
+        self.scan_floor = min(self.rx0 + len(self.rx), self.tx0 + len(self.tx))
+
     def _begin_scan(self):
         """Snapshot a window and start scanning it, a few lags per frame.
 
@@ -221,7 +245,7 @@ class EchoCanceller:
         """
         hi = min(self.rx0 + len(self.rx), self.tx0 + len(self.tx))
         start = hi - self.win
-        if start < max(self.rx0, self.tx0 + self.search_hi):
+        if start < max(self.rx0, self.tx0 + self.search_hi, self.scan_floor):
             return False
         # The receive side is sampled sparsely -- that only costs terms in the
         # estimate. The transmit side is kept at full rate, because a lag that
