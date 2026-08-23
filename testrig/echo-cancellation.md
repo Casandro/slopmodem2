@@ -2,7 +2,7 @@
 
 `v32-ans-path.md` ends with V.32 unable to hold 9600 with trellis coding against
 either modem, and `v42-error-correction.md` works out why: the FRITZ!Box's
-analogue hybrid returns our own signal 9.6 ms later at about 19 dB down, so our
+analogue hybrid returns our own signal 50 to 66 ms later at about 19 dB down, so our
 transmit level sets our own receive noise floor. Turn it up and the far end can
 decode us but we cannot decode it; turn it down and the reverse. A 32-point
 constellation has 10 dB less minimum distance than QPSK at the same power and no
@@ -30,64 +30,41 @@ early.
 V.32 signals oscillates at the 1800 Hz carrier, so it has a period of 4.4
 samples: a coarse lag grid aliases and can miss the peak completely.
 
-**And the delay is a property of the call, not of the rig.** The first
-measurement gave 9.6 ms and the range was tuned around it, 8 to 200 samples.
-Four consecutive calls then measured **77, 205, 461 and 525 samples** — 9.6,
-25.6, 57.6 and 65.6 ms — because the loop includes the FRITZ!Box's jitter buffer
-and whatever frame alignment the call happens to settle on.
+**The delay cannot be under one RTP frame.** Our frame *k* is emitted only after
+inbound frame *k* has been read, and whatever the box reflects has to be
+packetised before it returns, so the earliest our own signal can reappear is in
+inbound frame *k+1*. That is a property of the loop, not of the network, and it
+has two consequences.
 
-The first tuned range missed the second call entirely, finding a weaker unrelated
-peak at lag 45 and locking onto nothing useful. The second guess, 500 samples,
-was cleared by 461 with 8% to spare — and then the very next call came in at 525
-and would have been missed too. The range now runs to 800 samples, 100 ms.
-Widening costs threshold margin only as sqrt(ln L) — 0.0495 to 0.0514 for double
-the coverage — while guessing the range wrong costs the whole feature. Tuning a
-search to one measurement of a quantity that varies per call is a mistake that
-shows up on the *next* call, which is why it was made twice here.
+The first is that **nothing has to be held back.** To cancel inbound sample *j* we
+need `tx[j - bulk]`; with `bulk >= 160` the newest sample required is `160k - 1`,
+which is exactly what has been pushed by the time inbound frame *k* arrives. An
+earlier version held one frame to be safe, which cost 48 T of latency and broke
+5.4.2's turnaround (below). There was never anything to hold back for.
 
-**A constant delay, always.** The canceller runs one frame behind whether it is
-adapting or not. Switching a delay on at lock would splice the sample stream, and
-this codebase has paid for that twice already — the equaliser is frozen rather
-than starved, and the V.14 framer is gated on its output rather than its input,
-both for this reason.
+The second is that **a lag below one frame is not a short echo, it is noise.**
+The search starts at 160 samples. The first version started at 8 and duly found a
+strong peak at 77 samples — 9.6 ms — which would have the echo arriving before it
+was transmitted, and which was then written into this document and used to justify
+a search range. Fitting the filter to such a peak can only add to the residual.
 
-## Stability when there is no echo
+**Where 9.6 ms came from.** Not the line: the capture files. `rtp.pump` emits a
+priming burst of two frames before any inbound exists, and appends every emit to
+`out_audio` while `in_audio` grows only when a packet arrives — the run logs say
+`in=3018 out=3020`. So the transmit file leads the receive file by 320 samples and
+every lag taken from those files was that much too small. The canceller's own scan
+log was never affected, because it is fed inside the frame loop where its two
+streams advance together.
 
-This is the property that decides whether a canceller is worth having, so it is
-the one built for first.
+Corrected, the delays observed are **397, 461, 493 and 525 samples — 50 to 66 ms**,
+which is a far tighter spread than the 9.6-to-66 ms range this document previously
+claimed. The variation between calls is real but modest; the apparent wildness was
+two coordinate systems being averaged together.
 
-**It does nothing until it has found an echo.** No lock, no adaptation, not one
-tap moves; the output is the input, sample for sample. That is not a happy
-accident of convergence, it is the default state.
-
-**The threshold is a statistical claim, so it is derived rather than guessed.**
-The first version compared the correlation peak against the median across lags and
-demanded a factor of four. It locked immediately on an echo-free line at
-rho = 0.131 — because the maximum of many noisy estimates *is* several times the
-median by construction. For L lags and N terms the largest spurious peak is about
-sqrt(2 ln L / N), which for 592 lags and 1024 terms is 0.11: the observed value,
-almost exactly. The threshold is now `1.8 * sqrt(2 ln L / N)`, and the search
-range was cut from 75 ms to 25 ms because every lag not searched buys margin.
-With 792 lags and 16384 terms the null is 0.0285 and the threshold 0.0514,
-against the 0.115 to 0.135 a real echo produced on the line — and the strongest
-unrelated peak in that same call measured 0.042, below the threshold.
-
-**And two scans must agree** on the lag unless the correlation is unambiguous —
-either rho ≥ 0.5, which is what single talk gives, or twice the threshold, at
-which point a spurious peak would need 3.6 times the null and 16384 terms make
-that impossible. Chance does not repeat a lag either.
-
-Tested against six independent echo-free signal pairs: no locks, peak rho 0.044
-against a threshold of 0.064. One clean run would be luck; six is a property.
-
-**Leakage** pulls the taps towards zero on a 60 s time constant, so a filter whose
-echo has gone decays instead of injecting a stale estimate.
-
-**A divergence guard** compares output power against input power over one-second
-windows. Note what this can and cannot do: with the far end talking 19 dB above
-the echo, both are dominated by the far end and the ratio sits at 0 dB even when
-cancellation is perfect. It is a divergence detector, not a performance meter —
-it fires when the filter is *injecting* noise, which is the failure that matters.
+Measured on the Cirrus's port, meanwhile, there is **no echo at all**: two runs,
+best correlation 0.036 against a 0.051 threshold, no consistent lag. The
+reflection happens at the hybrid the far modem is plugged into, so it is a
+property of the port and not of the box.
 
 ## What it costs
 

@@ -198,23 +198,48 @@ frames into a jitter buffer and drive its modulator from a sample clock **derive
 arrivals** rather than emitting demodulated-and-remodulated audio one-for-one in lockstep. That
 refinement has not been built or tested.
 
-## The path has echo: 19 dB at 9.6 ms
+## The path has echo: about 19 dB at 58 to 66 ms
 
 Measured by cross-correlating our transmitted audio against our received audio
-from the same call, in the data phase of a V.32 connection:
+from the same call, in the data phase of a V.32 connection. Both modems hang off
+FXS ports of the same FRITZ!Box, and what comes back is its analogue two-wire
+hybrid reflecting our own signal; 19 dB is an unremarkable figure for a hybrid.
 
-| lag | normalised correlation | echo return loss |
-|---|---|---|
-| **9.6 ms** | **0.112** | **19 dB** |
-| 61 ms | 0.034 | 29 dB |
-| 79 ms | 0.035 | 29 dB |
-| (floor across all lags) | 0.007 | 43 dB |
+| where | delay | correlation | echo return loss |
+|---|---|---|---|
+| calls to the Conexant | **461 samples, 57.6 ms** | 0.115 | 19 dB |
+| calls to the Conexant | **525 samples, 65.6 ms** | 0.130 | 18 dB |
+| calls to the Cirrus | none found | ≤ 0.036 against a 0.051 threshold | — |
+| (floor across all lags) | | 0.006 | 44 dB |
 
-The peak is three samples wide and 16 times the correlation floor, so it is a real
-impulse response and not an artefact of both signals sharing an 1800 Hz carrier.
-Both modems hang off FXS ports of the same FRITZ!Box, so this is its analogue
-two-wire hybrid reflecting our own signal back at us; 19 dB is an unremarkable
-figure for a hybrid, and 9.6 ms is well inside one 20 ms RTP frame.
+**The echo is per-port, not per-box.** The reflection happens at the hybrid the
+*far* modem is plugged into, so a call to the Conexant reflects off the Conexant's
+port. Two runs to the Cirrus found nothing above threshold at any lag.
+
+### The delay cannot be under one RTP frame, and an earlier figure said it was
+
+This section previously reported 9.6 ms, and that number was wrong in a way worth
+recording, because it survived several rounds of use.
+
+The delay cannot be shorter than one 20 ms frame. Our frame *k* is emitted only
+after inbound frame *k* has been read, and whatever the box reflects has to be
+packetised before it comes back, so the earliest our own signal can reappear is in
+inbound frame *k+1*. A measured 9.6 ms would have the echo arriving before it was
+transmitted.
+
+The error was in the capture files, not the line. `rtp.pump` emits a priming burst
+of two frames before any inbound arrives, and every emit is appended to
+`out_audio` while `in_audio` only grows when a packet is received — the run logs
+say so plainly, `in=3018 out=3020`. So the transmit file leads the receive file by
+**320 samples**, and every lag measured from those files was that much too small:
+9.6 ms was really 49.6 ms.
+
+The canceller itself was never affected: it is fed inside the frame loop, where
+its two streams advance together, so the lags in its own scan log are true. Those
+are the numbers in the table above. The moral is the ordinary one — a
+cross-correlation is only as good as the alignment of the two things being
+correlated, and "impossible answer" is a stronger signal than "plausible answer",
+which is why it took a physical argument rather than a bigger window to find.
 
 **This matters more than it looks.** Without an echo canceller our own transmitter
 is the dominant noise source in our own receiver, and the level we transmit at

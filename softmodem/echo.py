@@ -33,15 +33,27 @@ import math
 
 SR = 8000.0
 
-# One RTP frame. The canceller always runs this far behind, because the echo of
-# the frame we are about to send arrives inside the frame we are reading now:
-# with a 9.6 ms delay, 83 of every 160 inbound samples depend on transmit samples
-# the state machine has not generated yet. Holding one frame makes every inbound
-# sample causally cancellable.
-HOLD = 160
+# The echo cannot come back sooner than one RTP frame, and that is not an
+# assumption about the network -- it is forced by the loop. Our frame k is emitted
+# only after inbound frame k has been read, and the far end has to packetise
+# whatever it reflects, so the earliest our own signal can reappear is in inbound
+# frame k+1.
+#
+# That makes the whole thing causal with **no delay at all**. To cancel inbound
+# sample j we need tx[j - bulk]; with bulk >= FRAME the newest sample required is
+# 160k - 1, which is exactly what has been pushed by the time inbound frame k
+# arrives. An earlier version held a frame back to be safe, which cost 48 T of
+# latency, broke 5.4.2's 64 +/- 2 T turnaround and stopped one of the two modems
+# from completing a handshake at all. There was never anything to hold back for.
+FRAME = 160
+HOLD = 0
 
 SPAN = 32           # taps, once the bulk delay is known
-SEARCH_MIN = 8      # samples; below this is our own filter tail, not echo
+# A lag below one frame is not a short echo, it is a spurious correlation peak,
+# and locking onto one fits the filter to noise and *adds* to the residual. The
+# first version searched from 8 and duly found a strong peak at 77 samples --
+# 9.6 ms, which would have the echo arriving before it was transmitted.
+SEARCH_MIN = FRAME
 # The echo delay is NOT a property of the rig, it is a property of the call.
 # Three consecutive connections put it at 77, 205 and 461 samples -- 9.6, 25.6 and
 # 57.6 ms -- because the loop includes the FRITZ!Box's jitter buffer and whatever
@@ -281,7 +293,9 @@ class EchoCanceller:
         # chance will not do for us.
         if peak >= CONFIDENT_RHO or peak >= CONFIDENT_MULT * thresh \
                 or (self.agree is not None and abs(self.agree - lag) <= 2):
-            self.bulk = max(self.search_lo, lag - self.span // 4)
+            # Never below one frame: the taps run from bulk upwards, so bulk is
+            # what decides whether the transmit history exists yet.
+            self.bulk = max(FRAME, self.search_lo, lag - self.span // 4)
             self.locked = True
             self.w = [0.0] * self.span
             self._pow_valid = False
@@ -323,8 +337,14 @@ class EchoCanceller:
         """Arrived samples in; cancelled samples out, HOLD samples behind."""
         self.rx.extend(inbound)
         self._trim()
-        # Everything we can emit given the transmit history we hold.
-        last = min(self.rx0 + len(self.rx), self.tx0 + len(self.tx)) - self.hold
+        # Everything we can emit given the transmit history we hold. Unlocked we
+        # are a pass-through and nothing is required, so emit it all; locked, the
+        # oldest transmit sample a tap can reach is j - bulk - span, and the
+        # newest is j - bulk, so j may run to tx_end + bulk. With bulk >= FRAME
+        # that is at or past rx_end, which is why no frame has to be held.
+        rx_end = self.rx0 + len(self.rx)
+        tx_end = self.tx0 + len(self.tx)
+        last = rx_end if not self.locked else min(rx_end, tx_end + self.bulk)
         out = []
         if not self.enabled:
             while self.out_n < last:
@@ -332,7 +352,7 @@ class EchoCanceller:
                 self.out_n += 1
             return out
 
-        if not self.locked and self.searches < 200:
+        if self.budget > 0 and not self.locked and self.searches < 200:
             if self.scan_r is None:
                 self._begin_scan()
             if self.scan_r is not None:

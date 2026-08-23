@@ -342,9 +342,11 @@ our own receive collapses, from 88% within 0.35 to **30.9%**, with 161 bad FCS.
 
 Our transmit level should have nothing to do with our own receiver, and the reason
 it does is measurable. Cross-correlating our transmitted audio against our
-received audio from the same call gives a sharp peak at **9.6 ms delay,
-rho = 0.112, an echo return loss of about 19 dB** — against a correlation floor of
-0.007. Three samples wide, decaying to 0.03 by 60 ms: a real impulse response,
+received audio from the same call gives a sharp peak at **rho = 0.112, an echo
+return loss of about 19 dB** — against a correlation floor of 0.007. (The delay
+was first reported here as 9.6 ms. That was wrong: the capture files are offset by
+the RTP pump's two priming frames, and the real figure is about 50 ms. See
+`sip-audio-path.md`.) Three samples wide, decaying to 0.03 by 60 ms: a real impulse response,
 not an artefact of both signals sharing an 1800 Hz carrier. Both modems hang off
 FXS ports of the same FRITZ!Box, so this is its analogue hybrid reflecting us back
 at ourselves, and 19 dB is an ordinary figure for a two-wire hybrid.
@@ -365,10 +367,11 @@ not the problem, the margin is.
 
 At equal transmitted power the 9600 trellis constellation's minimum distance is
 0.447 against QPSK's 1.414 — **10 dB less margin**, about 6 dB after the code's
-gain. So 4800 works at either level and 9600 trellis works at neither. It also
-explains the equaliser result from earlier work: a T/2 equaliser with 21 taps
-spans 4.4 ms and cannot reach a 9.6 ms echo, 41 taps nearly can, and the median
-error duly falls from 0.55 to 0.22 with nothing further gained at 61.
+gain. So 4800 works at either level and 9600 trellis works at neither. A T/2 equaliser with 41 taps spans 8.5 ms, so it cannot reach an echo at 50 ms
+either way — which withdraws an explanation offered here earlier. The 21-to-41 tap
+improvement, median error 0.55 to 0.22 with nothing gained at 61, is real and
+reproducible, but it is not the equaliser reaching the echo and the cause is
+unexplained.
 
 **The missing piece is an echo canceller.** Every real V.32 modem has one, because
 V.32 is full duplex on a two-wire circuit, and V.8's ANSam phase reversals exist

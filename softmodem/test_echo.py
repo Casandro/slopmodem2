@@ -76,7 +76,10 @@ def erle_db(got, near, far, gain, delay, frac=3):
 
 
 GAIN = 10 ** (-19.0 / 20.0)      # the 19 dB return loss measured on this rig
-DELAY = 77                       # 9.6 ms at 8 kHz
+# A physically possible delay. The echo cannot return in less than one RTP frame:
+# our frame k goes out only after inbound frame k is read, and the far end has to
+# packetise what it reflects. 237 samples is 29.6 ms.
+DELAY = 237
 
 
 if __name__ == "__main__":
@@ -119,16 +122,21 @@ if __name__ == "__main__":
           echo.NULL_K * null < 0.06 and null < 0.03,
           "%d lags, %d terms: null %.4f, threshold %.4f, against 0.12 measured "
           "for a real echo" % (lags, terms, null, echo.NULL_K * null))
-    check("  and the search reaches past both delays seen on real calls",
-          echo.SEARCH_MAX > 173 and echo.SEARCH_MIN <= 77,
-          "range %d..%d samples covers 9.6 ms and 21.6 ms"
-          % (echo.SEARCH_MIN, echo.SEARCH_MAX))
+    # The range runs from the physical floor -- one RTP frame -- to 100 ms.
+    # It deliberately does not encode particular delays measured on the rig:
+    # those numbers were taken from the capture files, which lead the receive
+    # stream by the pump's two priming frames, so every one of them was 320
+    # samples too small.
+    check("  and the range runs from one frame to 100 ms",
+          echo.SEARCH_MIN == echo.FRAME and echo.SEARCH_MAX >= 800,
+          "range %d..%d samples = %.1f..%.1f ms"
+          % (echo.SEARCH_MIN, echo.SEARCH_MAX,
+             echo.SEARCH_MIN / 8.0, echo.SEARCH_MAX / 8.0))
 
     print()
     print("the stream it produces has to be usable by an equaliser")
-    check("output is exactly the input less one frame of hold",
-          len(got) == len(near[:len(got)]) and len(got) > 0
-          and abs(len(got) - (8000 * 8 - 160 - echo.HOLD)) <= 160,
+    check("nothing is held back: out equals in, sample for sample",
+          echo.HOLD == 0 and abs(len(got) - (8000 * 8 - 160)) <= 160,
           "%d samples out for %d in, hold %d"
           % (len(got), 8000 * 8, echo.HOLD))
     ec3 = echo.EchoCanceller(budget=64, win=8192)
@@ -136,9 +144,23 @@ if __name__ == "__main__":
     for k in range(0, 8000, 160):
         lens.append(len(ec3.feed(near[k:k + 160])))
         ec3.push_tx(far[k:k + 160])
-    check("  and it comes out in steady 160-sample frames, never spliced",
-          sorted(set(lens[2:])) == [160],
-          "frame sizes after start-up: %s" % sorted(set(lens[2:])))
+    check("  and it comes out in steady 160-sample frames from the first one",
+          sorted(set(lens)) == [160],
+          "frame sizes: %s" % sorted(set(lens)))
+
+    # A correlation peak below one frame is not a short echo, it is noise, and
+    # fitting the filter to it can only add to the residual.
+    check("the search will not even look below one RTP frame",
+          echo.SEARCH_MIN >= echo.FRAME,
+          "search starts at %d samples, one frame is %d"
+          % (echo.SEARCH_MIN, echo.FRAME))
+    sub = echo.EchoCanceller(budget=64, win=8192)
+    fr2 = v32ish(8000 * 6, 21)
+    nr2 = v32ish(8000 * 6, 22)
+    out2 = run(sub, nr2, fr2, [(40, 0.30)])      # a big "echo" at 5 ms
+    check("  so an impossible 5 ms reflection is ignored, not chased",
+          not sub.locked and max(abs(v) for v in sub.w) == 0.0,
+          "locked %s, best rho %.3f" % (sub.locked, sub.best_rho))
 
     print()
     print("a real echo: 9.6 ms at 19 dB down, both ends talking")

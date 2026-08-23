@@ -46,6 +46,9 @@ def main():
                     help="bytes handed to the DTE side per 20 ms frame; 4 is "
                          "200 byte/s, well under any of the line rates, so "
                          "raise it to measure throughput rather than latency")
+    ap.add_argument("--echo-budget", type=int, default=None,
+                    help="lags scanned per frame; 0 keeps the canceller in the "
+                         "path but does no searching, which isolates its cost")
     ap.add_argument("--echo", action="store_true",
                     help="cancel our own echo out of the receive path")
     ap.add_argument("--xid-no-opt", action="store_true",
@@ -94,7 +97,9 @@ def main():
 
     m = v32fsm.AnswerStartup(level_dbfs=a.level, ans_s=a.ans, rates=rates,
                              trellis=a.trellis, trn=a.trn, bis=a.bis,
-                             ec=a.ec, cancel_echo=a.echo)
+                             ec=a.ec, cancel_echo=a.echo,
+                             **({} if a.echo_budget is None
+                                else {"echo_budget": a.echo_budget}))
     m.xid_reps = a.xid_reps
     m.xid_opt_pi = not a.xid_no_opt
     if a.xid_probe:
@@ -273,6 +278,11 @@ def main():
         if m.echo is not None:
             print()
             print("  %s" % m.echo.state())
+            # Every scan's peak and lag, in the canceller's own index space --
+            # which, unlike the capture files, is not skewed by the pump's
+            # priming frames. This is the measurement of the echo itself.
+            print("  echo scans (rho@lag): %s"
+                  % ", ".join("%.3f@%s" % r for r in m.echo.scan_log))
         print()
         print("  7.2 V.14: %d characters recovered from the far end's DTE"
               % len(got))

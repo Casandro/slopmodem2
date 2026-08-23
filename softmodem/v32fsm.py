@@ -1074,14 +1074,15 @@ class AnswerStartup(_Base):
     IS_CALLER = False
 
     def __init__(self, level_dbfs=-24.0, ans_s=1.0, rates=(4800, 9600),
-                 log=None, trellis=False, trn=TRN_MIN, bis=False, ec=False, cancel_echo=False):
+                 log=None, trellis=False, trn=TRN_MIN, bis=False, ec=False, cancel_echo=False,
+                 echo_budget=echomod.SEARCH_BUDGET):
         _Base.__init__(self, level_dbfs, v32.Scrambler.GPA,
                        v32.Scrambler.GPC, log)
         self.can_trellis = bool(trellis)
         self.can_bis = bool(bis)
         self.want_ec = bool(ec)
         if cancel_echo:
-            self.echo = echomod.EchoCanceller()
+            self.echo = echomod.EchoCanceller(budget=echo_budget)
         if bis:
             # every V.32bis rate is trellis coded, so offering
             # them is offering the coding
@@ -1341,14 +1342,15 @@ class OriginateStartup(_Base):
 
     def __init__(self, level_dbfs=-24.0, rates=(4800, 9600), log=None,
                  ans_hold=1.0, trellis=False, trn=TRN_MIN,
-                 bis=False, ec=False, cancel_echo=False):
+                 bis=False, ec=False, cancel_echo=False,
+                 echo_budget=echomod.SEARCH_BUDGET):
         _Base.__init__(self, level_dbfs, v32.Scrambler.GPC,
                        v32.Scrambler.GPA, log)
         self.can_trellis = bool(trellis)
         self.can_bis = bool(bis)
         self.want_ec = bool(ec)
         if cancel_echo:
-            self.echo = echomod.EchoCanceller()
+            self.echo = echomod.EchoCanceller(budget=echo_budget)
         if bis:
             # every V.32bis rate is trellis coded, so offering
             # them is offering the coding

@@ -202,6 +202,7 @@ def main():
     ap.add_argument("--xid-probe", action="store_true")
     ap.add_argument("--xid-no-opt", action="store_true")
     ap.add_argument("--echo", action="store_true")
+    ap.add_argument("--echo-budget", type=int, default=None)
     a = ap.parse_args()
 
     cmd = [sys.executable, "v32answer.py", "--seconds", str(a.seconds),
@@ -226,6 +227,8 @@ def main():
         cmd.append("--xid-no-opt")
     if a.echo:
         cmd.append("--echo")
+    if a.echo_budget is not None:
+        cmd += ["--echo-budget", str(a.echo_budget)]
     if a.flood:
         cmd += ["--feed", str(max(a.feed, 30))]
     elif a.feed != 4:
