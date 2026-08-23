@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+
+# SIP credentials. sipcfg.py reads the account out of testrig/ata.md, which is
+# the only place they live -- see ata.md.example for the format.
+testrig/ata.md
+
+# ITU-T Recommendations. The work leans on them heavily and cites clause and
+# table numbers throughout, but they are ITU copyright and are not redistributed
+# here. Download what you need from itu.int into references/.
+references/
+
+# Per-run capture output, rewritten by every call.
+softmodem/ref/v32if_*
+softmodem/ref/ec9600_tx.raw
