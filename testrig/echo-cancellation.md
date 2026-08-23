@@ -174,6 +174,43 @@ rig — median error 0.042 against a decision boundary at 0.707, 100% within 0.3
 The forward direction is still marginal at 9600 from call to call; what the
 canceller fixes is our own receiver, and there it is unambiguous.
 
+## The delay is not free: 5.4.2's 64 T turnaround
+
+Holding a frame to make the echo causally cancellable has a cost that took a
+while to surface, because it only bites during the handshake and only against one
+of the two modems.
+
+5.4.1 and 5.4.2 pin the turnaround after a detected phase reversal at **64 ± 2
+symbol intervals**, and they measure it at the line: "the time delay between the
+reception of this phase reversal at the line terminals and the transmitted CA to
+AC transition appearing at the line terminals shall be 64 ± 2 symbol periods".
+The canceller's one-frame hold puts 160 samples — 48 T — between the line and the
+state machine. Scheduling 64 T of pad *after* a detection that is already 48 T
+late produces about 112 T on the line, against a tolerance of two.
+
+The Conexant tolerates that. The Cirrus does not: it completed its AA, its CC and
+its reversal, then ceased transmitting and waited for a handshake that never
+arrived on its schedule, and eventually hung up. Three dial-in attempts in a row
+stalled in R1TX with the caller silent — the received level sat at −69 dBFS, the
+noise floor, from 3.5 s onwards.
+
+The diagnosis came from a number in the log that had been sitting there all
+along: MT read **192 T with the canceller off and 240 T with it on**, and the
+difference is exactly 48 T. A latency that shows up as a constant offset in a
+measured interval is latency in the measurement path.
+
+So the pad is now `64 T - rx_delay_T()`, which is 16 T with the canceller and 64 T
+without, and the line sees 64 T either way. The same correction applies to the
+call side's AA-to-CC turnaround. With it, the first attempt reached the data phase
+at 9600 non-redundant and **90% of the channel**, where the three before it had
+stalled.
+
+Worth noting what made this hard to see: the canceller was doing its job, the
+protocol logic was right, and the failure was in neither — it was in the *time
+reference* the two share. Any latency added between the line and a state machine
+has to come out of the intervals the state machine is asked to honour, not be
+added to them.
+
 ## What it does not do
 
 It cancels one bulk-delayed reflection. The rig's secondary reflections at 61 and

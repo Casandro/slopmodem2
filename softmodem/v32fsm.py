@@ -58,6 +58,19 @@ SBAR_LEN = 16                       # 5.2.2
 TRN_MIN = 1280                      # 5.2.3
 B1_LEN = 128                        # 5.4.1 / 5.4.2
 TURNROUND = 64                      # 5.4.1 / 5.4.2, +/- 2
+
+# 5.4.1 and 5.4.2 pin the turnaround to 64 +/- 2 T, measured on the *line*: "the
+# time delay between the reception of this phase reversal at the line terminals
+# and the transmitted CA to AC transition appearing at the line terminals". Any
+# latency between the line and the state machine therefore has to come out of
+# the pad, not be added to it.
+#
+# The echo canceller holds one frame -- 160 samples, 48 T -- so with it enabled
+# our reaction was 48 T late and the turnaround came out at about 112 T against a
+# tolerance of 2. Measured: MT read 192 T with the canceller off and 240 T with
+# it on, the difference being exactly its hold. The Conexant tolerated it; the
+# Cirrus did not, and simply stopped transmitting after the reversal and waited
+# for a handshake that never arrived on its schedule.
 QUIET16 = 16
 # 5.5: the far end asks for a retrain by going back to a carrier state and
 # holding it. The trigger is "more than 128 symbol intervals" of the other side's
@@ -775,6 +788,15 @@ class _Base:
         if self.rx is not None:
             self.rx.to_handshake()
 
+    def rx_delay_T(self):
+        """Symbol intervals of latency the receive path adds before the state
+        machine sees a signal. Only the echo canceller contributes, and only when
+        it is enabled; see the note on TURNROUND for why it has to be subtracted
+        from a turnaround the spec measures at the line."""
+        if self.echo is None:
+            return 0
+        return int(round(self.echo.hold * SYM_PER_FRAME / float(FRAME)))
+
     def _rate_bits(self, rates=(), end=False, trellis=False):
         """A rate sequence in whichever table applies.
 
@@ -1228,14 +1250,16 @@ class AnswerStartup(_Base):
                 else:
                     self._ev("phase reversal at %.0fT - timer stopped, "
                              "MT = %.0fT; state A then back to AC in %dT"
-                             % (r, self.mt, TURNROUND))
+                             % (r, self.mt, int(TURNROUND) - self.rx_delay_T()))
                 # 5.4.2 asks for CA "for an even number of symbol intervals"
                 # and then, "after transmitting a state A, revert to alternate A
                 # and C". An even CA segment already ends on A, and AC begins on
                 # A, so the two together give exactly one doubled A -- which is
                 # the discontinuity the far end detects. Inserting a further
                 # explicit A gives three in a row and no clean reversal.
-                pad = int(TURNROUND)
+                pad = int(TURNROUND) - self.rx_delay_T()
+                if pad < 2:
+                    pad = 2
                 if pad % 2:
                     pad += 1
                 self._send_states(["CA"[i % 2] for i in range(pad)]
@@ -1463,9 +1487,10 @@ class OriginateStartup(_Base):
             hits = self._rev()
             if hits:
                 self.t0_sym = self.tx.nsym
+                turn = max(2, int(TURNROUND) - self.rx_delay_T())
                 self._ev("first phase reversal at %.0fT - timer on, AA->CC in "
-                         "%dT" % (hits[-1], TURNROUND))
-                self._send_states(["A"] * TURNROUND + ["C"] * 60000)
+                         "%dT" % (hits[-1], turn))
+                self._send_states(["A"] * turn + ["C"] * 60000)
                 self._goto(CC)
                 self.rev600.at = []
                 self.rev3000.at = []
