@@ -14,7 +14,7 @@ host, so a minimal SIP/RTP user agent was written for this; it lives in `testrig
 | Registrar / PBX | `192.168.5.174` — **AVM FRITZ!Box 7490**, firmware `113.07.62 (Dec 1 2025)` |
 | Internal number | `**620` |
 | Transport | SIP over UDP/5060, digest auth (MD5) |
-| Registration | `REGISTER` → `200 OK`, contact bound as `sip:wurstuser@<local-ip>:<port>` |
+| Registration | `REGISTER` → `200 OK`, contact bound as `sip:<user>@<local-ip>:<port>` |
 | Negotiated codec | **G.711 A-law (PCMA, payload type 8)** at 8 kHz |
 | Credentials | in `ata.md` — deliberately not duplicated here or in the tools |
 
