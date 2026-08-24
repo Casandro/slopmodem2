@@ -16,6 +16,21 @@ import dsp, g711, rtp, v32, v32fsm, v42
 from sip_glue import sipmin, raw_recv, resp_for, HOST, USER, PW
 import modem
 
+# Characters we are willing to have queued ahead of the line when there is no
+# error-correcting entity to push back for us. One 20 ms frame is 24 characters
+# at 12000 bit/s, so this is a few frames of margin -- enough that the line never
+# idles, and well under dte.AsyncEncoder's hiwater of 128, past which V.14 starts
+# deleting every stop bit it sees.
+V14_AHEAD = 64
+
+# ... and how much of the line's own character budget to use. A bound on the
+# queue alone is not enough: it still lets us offer exactly the line rate, and
+# V.14 at exactly the line rate has no margin for the two clocks to differ, which
+# is what AsyncEncoder's docstring means by the slips coming back from the
+# Conexant. Feeding at 95% leaves the slack V.14 needs and costs 5% of a
+# direction that has no error correction to protect it anyway.
+V14_MARGIN = 0.95
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -157,14 +172,45 @@ def main():
                 # looked like the modem losing characters and was this
                 # Backpressure, so a feed rate above the line rate measures
                 # what the line carries instead of how much RAM we have.
-                # Only feed once the link is actually up: queueing while
-                # LAPM is still negotiating buries the real octet count under
-                # data that was never going to be sent yet.
-                room = (m.ec is None
-                        or (m.ec.up and len(m.ec.link.lapm.outq) < 4096))
-                if room:
+                #
+                # Every path needs its own, because the thing that provides it
+                # differs. With LAPM up the transmit queue does it. Without
+                # error correction there is nothing at all downstream: V.14 has
+                # no window and no retransmission, so an unbounded feed fills
+                # RAM, and once the converter's queue passes its hiwater every
+                # stop bit starts being deleted -- a stream the far framer
+                # cannot acquire on. That read as 27.9% printable and looked
+                # like a line fault. The bound is V14_AHEAD, comfortably under
+                # dte.AsyncEncoder's hiwater so deletion stays the exception
+                # V.14 intends it to be, and still several frames' worth so the
+                # line never goes idle for want of data.
+                if m.ec is not None:
+                    want = (a.feed if (m.ec.up
+                                       and len(m.ec.link.lapm.outq) < 4096)
+                            else 0)
+                elif m.want_ec and not m.ec_fell_back:
+                    # Detection has not finished. put() buffers into ecq, which
+                    # is handed to the V.14 converter in one go if detection
+                    # fails -- so bound it here too, or the fallback begins with
+                    # a burst it will spend the next second deleting.
+                    want = min(a.feed, V14_AHEAD - len(m.ecq))
+                else:
+                    # V.14: 10 bits on the line per 8-bit character, so the
+                    # line's budget is rate/10 characters a second and rate/500
+                    # per 20 ms frame. Pace to that, keep some back, and still
+                    # bound the queue.
+                    per_frame = int((m.rate or 4800) / 500.0 * V14_MARGIN)
+                    want = min(a.feed, max(per_frame, 1),
+                               V14_AHEAD - m.enc.pending())
+                if want > 0:
+                    # Repeat the pattern enough times to actually fill the feed.
+                    # `pat + pat` only ever yields len(pat) octets or fewer, so
+                    # with the 9-octet SLOPMODEM this capped every frame at 18
+                    # regardless of --feed: 900 byte/s, 7200 bit/s, and the same
+                    # number at 9600 and at 12000 because it was never the line.
                     i = sent[0] % len(pat)
-                    chunk = (pat + pat)[i:i + a.feed]
+                    reps = want // len(pat) + 2
+                    chunk = (pat * reps)[i:i + want]
                     m.put(chunk)
                     sent[0] += len(chunk)
             new = m.received()
