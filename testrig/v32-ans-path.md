@@ -2640,9 +2640,105 @@ on every retrain. At 12 000 that is 1.7 s of steady state out of an 83 s data
 phase. At 14 400 the data phase lasts about three seconds, so the same statistic
 is the 1.7 s *immediately preceding a collapse*, every time. The 9.4% residual it
 reports at 14 400 and the 1.4% it reports at 12 000 are not measuring comparable
-things, and the difference between them is mostly the window. The unbiased number
-for the Cirrus at 14 400 remains the passive bridge capture: 0.122 median, 1.9%,
-comfortably inside the 11.0% margin.
+things.
+
+**And then the unbiased measurement said the same thing.** The caveat was right;
+the conclusion first drawn from it — that the real figure must be the bridge
+capture's 1.9% and the 9.4% was an artefact of where the window fell — was wrong,
+and is corrected here. Every call already saves the received audio, so the eye can
+be re-measured off the recording in windows chosen after the fact instead of by
+where the call happened to die. Our receiver is re-run over it; nothing about the
+measurement disturbs the call being measured.
+
+The control comes first, because an instrument that has never been shown to move
+proves nothing. At 12 000, window by window from signal E:
+
+| t after E | residual | inside d_min/2 |
+|---|---|---|
+| 0.1 s | 12.4% | 76.6% |
+| 3.1 s | 11.6% | 77.4% |
+| 4.1 s | **2.8%** | 95.1% |
+| 4.6 s | **1.6%** | 100.0% |
+| 80 s | **1.4%** | 100.0% |
+
+The receiver *starts* shut and takes about four seconds to pull in, then holds
+1.4% and 100% inside for the remaining eighty. That is what acquisition looks like
+when it works. At 14 400, over a data phase that ran from signal E to the retrain
+3.6 s later:
+
+| t after E | residual | inside d_min/2 |
+|---|---|---|
+| 0.1 s | 9.4% | 72.8% |
+| 1.1 s | 9.4% | 71.4% |
+| 2.1 s | 9.2% | 72.7% |
+| 3.1 s | 9.0% | 71.8% |
+| 3.6 s | 11.5% | 44.2% |
+
+Flat. It never converges, and it is already at 9.4% one tenth of a second after
+the data phase opens — the eye is not closing, it never opened. So 9.4% is the
+real figure for a live call and the 1.9% bridge capture is measuring a different
+situation: one where the far end could decode *its* peer and therefore kept
+sending data, rather than spending the time asking us to retrain.
+
+One number in those two tables deserves more attention than it first got: **the
+12 000 link needed four seconds to converge, and the 14 400 data phase is torn
+down after 3.6.** Our receiver is never given as long as the case that works.
+
+### The gain re-measurement does not rescue 128 points on the line
+
+The obvious candidate, since a flat non-converging eye at 128 points is exactly
+what §"Three defects" describes and what re-measuring the gain fixed in loopback.
+It had been A/B'd on hardware only at 12 000, where the loop converges anyway.
+
+Six calls at 14 400, `--regain` off, at the default 50 frames, and at 10:
+
+| arm | gain re-measurements | far-end retrains | our transmit at their DTE |
+|---|---|---|---|
+| off | 0, 0 | 4, 4 | 14, 14 characters |
+| 50 (default) | 0, 37 | 0, 4 | 10, 14 |
+| 10 | 229, 272 | 4, 3 | 14, 14 |
+
+Firing it nought, thirty-seven or two hundred and seventy-two times produces the
+same call. The eye is unchanged too — 9.0 to 9.3% with it off, 9.0 to 9.3% with it
+forced every 0.2 s, measured off the captures of both. The loopback failure was a
+*scale* error, the output sitting 17 to 27% under the constellation, and
+re-measuring the gain is the right answer to that. This is not a scale error, so
+the right answer to that is not the right answer to this.
+
+Worth noting separately, because it makes the default weaker than it reads: the
+counter is reset by any momentary eye opening, and at 14 400 the eye flickers —
+19 to 20 gate openings in a call. So `REGAIN_EVERY = 50` frames of *consecutive*
+shut eye can go a whole call without firing once, which is what one of the two
+default-arm calls did.
+
+### Nor is it rounding
+
+The internal arithmetic was suspected on the grounds that a quantisation fine
+enough for 32 points might not be fine enough for 128. It is not the cause, and
+the budget is worth writing down because it bounds how much room there is to win
+anywhere inside our own code:
+
+| source | residual | of the 11.0% margin |
+|---|---|---|
+| our whole chain, soft to soft, no codec and no line | **0.70%** | 6% |
+| G.711 A-law, both passes of the round trip | ~1.84% | 17% |
+| the two together | ~1.97% | 18% |
+| measured on the line | **9.4%** | 85% |
+
+Internal arithmetic is 0.55% of the observed noise *power*. A-law measures 37.5 dB
+and is flat in level across −24 to −12 dBFS and flat in rate, as a companded codec
+should be — which also explains why the transmit-level sweep found nothing. Both
+are constant fractions of amplitude, so both eat a growing share of a shrinking
+margin without ever dominating it.
+
+Three real truncations turned up in the search and are recorded for what they are,
+which is too small to matter here: `int(self.amp * v)` in the modulator truncates
+toward zero rather than rounding, biased, with a dead zone at the origin, about
+0.5 LSB rms against a signal of some 3000; `int(f * self.nsub)` truncates the
+polyphase index, a systematic half-sub-phase timing bias, 0.12% of a symbol at
+`nsub = 128`; and `g711.encode` truncates rather than rounds anything fractional
+it is handed. Each is a fraction of a percent of the 0.70% our own chain already
+costs. Fixing them is hygiene, not throughput.
 
 Which leaves the honest answer to "why does 14 400 not work" as: **the margin is
 11.0% and everything on this path sits near it.** Not a defect, not a rate the
@@ -2650,9 +2746,17 @@ code cannot do — 12 000 runs at 90% of the channel in both directions for 83
 seconds on the same rig, on the same day, with the same build. One rate up, the
 constellation doubles at the same rms radius, the margin falls to 11.0%, and the
 link stops holding in one direction or the other within seconds. The single call
-that carried 35 304 clean characters says the equipment can do it; twelve that
-carried nothing say we cannot reach that state on purpose, and nothing measured so
-far says what puts it there.
+that carried 35 304 clean characters says the equipment can do it; the twenty-odd
+that carried nothing say we cannot reach that state on purpose.
+
+What has been ruled out, each by measurement rather than by argument: our
+transmit level, across 12 dB; the V.14 feed rate, at 900 against 3200 char/s; the
+gain re-measurement, at nought, thirty-seven and two hundred and seventy-two
+firings; our own arithmetic, at 0.70% of an 11.0% margin; and A-law, at 1.84%.
+What is left is a 9.4% residual that is there from the first tenth of a second of
+every data phase, and the fact that the direction which actually tears the call
+down is the other one — the far end asking us to retrain, in almost every call
+against the Cirrus.
 
 ## The race for signal E
 
