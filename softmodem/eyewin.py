@@ -69,25 +69,43 @@ def main(path, win=0.5):
     for k in range(int(11.0 * SR), int((eT + 0.11) * SR) - 160, 160):
         rx.feed(x[k:k + 160])
     rx.to_data(mode, True, ts)
+    # The timing loop's own telemetry, alongside the eye, because "the eye is
+    # bad" and "the timing is wrong" are different claims and the second was
+    # suspected of causing the first. tau is the sampling instant in samples, so
+    # its slope against the symbol count is the period the loop has settled on;
+    # 8000/2400 = 3.33333 is nominal and the deviation is the clock offset it
+    # believes it is tracking.
+    rx.rx.log_every = 50
+    rx.rx.tlog = []
 
     print()
-    print("  %-9s %-9s %-11s %-11s %s"
-          % ("t (s)", "symbols", "median", "residual", "inside d_min/2"))
+    print("  %-8s %-8s %-10s %-9s %-15s %-11s %-10s %s"
+          % ("t (s)", "symbols", "median", "residual", "inside d_min/2",
+             "symbol per.", "ppm", "|e_t| rms"))
     start = int((eT + 0.11) * SR)
     step = int(win * SR)
     for w0 in range(start, len(x) - 160, step):
         before = len(rx.data_syms)
+        blog = len(rx.rx.tlog)
         for k in range(w0, min(w0 + step, len(x) - 160), 160):
             rx.feed(x[k:k + 160])
         syms = rx.data_syms[before:]
+        rows = rx.rx.tlog[blog:]
         if len(syms) < 200:
             continue
         d = sorted(min(abs(z - p) for p in P) for z in syms)
         med = d[len(d) // 2]
         inside = 100.0 * sum(1 for v in d if v < dmin / 2) / len(d)
-        print("  %-9.1f %-9d %-11.3f %-11s %.1f%%"
+        if len(rows) >= 4:
+            per = (rows[-1][1] - rows[0][1]) / max(rows[-1][0] - rows[0][0], 1)
+            ppm = 1e6 * (per - v32.SPS) / v32.SPS
+            et = math.sqrt(sum(r[2] * r[2] for r in rows) / len(rows))
+            tcol = "%-11.5f %-10.0f %.4f" % (per, ppm, et)
+        else:
+            tcol = "%-11s %-10s %s" % ("-", "-", "-")
+        print("  %-8.1f %-8d %-10.3f %-9s %-15s %s"
               % (w0 / float(SR), len(syms), med,
-                 "%.1f%%" % (100.0 * med / rms), inside))
+                 "%.1f%%" % (100.0 * med / rms), "%.1f%%" % inside, tcol))
     return 0
 
 

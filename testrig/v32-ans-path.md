@@ -2758,6 +2758,54 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### The constellation and the timing loop, both cleared
+
+Two more suspects, both of the form "fine for 32 points, not fine for 128", and
+both answered without hardware or with the captures already in hand.
+
+**The point tables.** A few misplaced points out of 128 would look exactly like
+this — mostly right, occasionally not, and invisible soft to soft because both
+ends share the error. `test_v32.py` now asserts six properties of all four
+trellis constellations, with 7200, 9600 and 12 000 calibrating the check because
+they work against hardware. 14 400 passes every one: 128 distinct points, 2^7 of
+them; d_min 1.4142 and rms radius 6.4031; mean power 41.00, which matters because
+the transmit scale divides by it and an error there would move the line level
+with the rate; closure under a quarter turn, which Table 1's differential quadrant
+coding depends on; and eight subsets whose internal distance is 2*sqrt(2) times
+d_min, the same partition gain every other rate shows.
+
+The mapping is covered by better evidence than a structural check could give:
+`r14400b` put 35 304 characters into the Cirrus's DTE at a character error rate
+of zero, which is about 47 000 symbols at six bits each and exercises all 128
+points many times over, and the bridge capture decoded a real Cirrus 14 400
+transmission at 1.9%. Both halves have been read correctly by hardware.
+
+**Timing recovery.** A sampling-phase error costs a dense constellation more than
+a sparse one, so it fits the shape of the failure. `eyewin.py` now prints the
+loop's own telemetry beside the eye, and the comparison is between two calls from
+the same modem over the same path, where the true clock offset is the same:
+
+| | residual | symbol period | ppm vs nominal | \|e_t\| rms |
+|---|---|---|---|---|
+| 12 000, settled | **1.4%** | 3.33319 | −43 | 0.61 to 0.78 |
+| 14 400, settled | **9.4%** | 3.33314 to 3.33319 | −42 to −58 | 0.49 to 0.79 |
+
+The loop reaches the same answer in the failing call as in the working one, to
+within a few ppm, with the same integrator and the same detector noise, and it
+gets there in about half a second. That −43 ppm is corroborated from outside the
+receiver: the voice-mode capture puts the two clocks 46 ppm apart, measured by
+correlation and with no timing loop involved at all. Timing recovery converges,
+converges correctly, and the eye is still 9.4%.
+
+A first attempt to answer this synthetically — modulate, matched-filter at a
+deliberately wrong phase, plot residual against offset — was abandoned when its
+baseline came out at 15% and stayed within 0.3 points of that across an entire
+symbol period. A sensitivity curve that is flat is not measuring sensitivity; the
+transmit filter's own group delay had been left out, so nothing was ever sampled
+near the right instant. The telemetry from the real receiver on the real capture
+was both cheaper and better evidence, and it is what should have been reached for
+first.
+
 ## The race for signal E
 
 Dial-in from the Cirrus was reaching the data phase about three times in four. The
