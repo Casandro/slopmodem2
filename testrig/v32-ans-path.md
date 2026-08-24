@@ -2806,6 +2806,83 @@ near the right instant. The telemetry from the real receiver on the real capture
 was both cheaper and better evidence, and it is what should have been reached for
 first.
 
+### The equaliser, swept properly this time, and the echo that is not there
+
+The earlier sweep of taps and step size was done on a *Conexant* capture at
+*12 000*, and its conclusion — that the equaliser was never the limit — rested on
+a second transmitter rather than on the sweep itself. 14 400 against the Cirrus
+had never been swept, and the capture was on disk. `eqsweep.py` replays it
+through the receiver under different configurations, with the settled 12 000
+window as the control:
+
+| configuration | 14 400 residual | 12 000 residual |
+|---|---|---|
+| 21 taps (default) | 9.26% | 1.40% |
+| 41 taps | 9.29% | 1.40% |
+| 61 taps | 9.41% | 1.40% |
+| 81 taps | 9.34% | 1.41% |
+| 21 taps, mu_dd ÷4 | 9.24% | 1.47% |
+| 21 taps, mu_dd ×4 | 9.17% | 1.41% |
+| 41 taps, carrier loop ÷4 | 9.33% | 1.40% |
+
+Quadrupling the equaliser moves 14 400 by 0.15 points, in the wrong direction as
+often as the right one. The control reproduces the live figure exactly, so the
+instrument works; it simply has nothing to find.
+
+**The whiteness settles why**, and it is the discriminator this file used the
+first time round. Intersymbol interference is correlated symbol to symbol;
+additive noise is not. At the default 21 taps the leftover error has a lag-1
+autocorrelation of **−0.037 at 14 400 and −0.035 at 12 000** — white in both
+cases. An equaliser removes correlated distortion and cannot touch white noise,
+so no length of filter was ever going to help. (At 41 taps and beyond the figure
+goes to −0.36, which is the surplus taps fitting gradient noise rather than ISI
+appearing; the reading that means anything is the one at the length in use.)
+
+**Echo, measured rather than assumed.** Our transmitted and received audio are
+both saved, so the question of how much of our own signal comes back needs no new
+apparatus: correlate one against the other at every lag out to 200 ms and fit the
+best gain at each.
+
+| lag | 179 ms | 24 ms | 37 ms | 90 ms | 85 ms | median of all lags |
+|---|---|---|---|---|---|---|
+| gain | 0.0067 | 0.0064 | 0.0063 | 0.0059 | 0.0057 | 0.0012 |
+| return loss | 43.5 dB | 43.9 | 44.0 | 44.7 | 44.9 | 58.1 |
+
+There is no echo here. Five "peaks" of the same height at unrelated lags is what
+the maximum of some seventeen hundred noise samples looks like; a real reflection
+is one clear peak well clear of the floor, as the 58 ms one on the Conexant's
+port was. Taking the largest of them at face value anyway puts the echo at
+−65 dBFS against a received signal at −25.5 dBFS: **1.0% of amplitude against a
+9.2% residual**, which is 1.2% of the noise power. Cancelling it perfectly would
+change nothing, and it is consistent with the canceller's own scans, which report
+rho 0.027 to 0.036 on this port and never find a lag worth locking to.
+
+### What that leaves
+
+The residue at 14 400 is **white additive noise at about 9% of amplitude**, which
+is a received signal-to-noise ratio near 20.7 dB, where the same path and the same
+receiver measure 1.40% — 37 dB — at 12 000. The path cannot know the rate, our own
+chain has been measured at 0.70%, and the equaliser, the timing loop, the
+constellation, the gain re-measurement, the transmit level and the echo have each
+been ruled out by measurement. What is left is what the far end puts on the line.
+
+This file already has the evidence for that, in the swapped 2×2 with replicates
+three sections above. The Cirrus's own 14 400 transmit, judged by our receiver
+across six bridge runs, measured medians of 0.122, 0.587, 0.189, 0.561, 0.082 and
+0.086 — in residual terms **1.9%, 9.2%, 3.0%, 8.8%, 1.3% and 1.3%**. Two of six
+land at nine per cent, and nine per cent is exactly the number every failing call
+reports. The reading that fits everything is that the Cirrus's 14 400 transmitter
+is bimodal: mostly good, sometimes not, with nothing in between. `r14400b`, the
+one call in fourteen that put 35 304 clean characters into its DTE, is what the
+good mode looks like from our side.
+
+That is a hypothesis with a measurement attached and not yet a finding: it was
+assembled from six bridge runs made for another purpose and three live captures,
+and confirming it wants bridge captures of the Cirrus at 14 400 taken back to back
+until both modes appear in one sitting. What can be said now is that the fault is
+not on our side of the line, and that the list of things checked to establish that
+is long enough to be worth trusting.
+
 ## The race for signal E
 
 Dial-in from the Cirrus was reaching the data phase about three times in four. The
