@@ -289,6 +289,70 @@ modems do the job themselves.
   V.8bis `ESr` tone, on duration grounds (~2 s observed vs 100 ms nominal), but this rests on
   duration alone.
 
+## Listening to the path with no modem in it
+
+When 14 400 would not hold and every candidate on our side had been ruled out, the
+obvious remaining suspect was the box: something the ATA does that a modem does
+not expect. Testing that means getting the signal onto the line and off it again
+with nothing demodulating in between, which the rig can do — `playraw.py` answers
+a call and plays a real V.32bis data-phase signal at it, and `vcap.py` puts a
+modem in voice mode (`+FCLASS=8`) so its own ADC records what arrives at the FXS
+port. Our transmitter, the whole SIP and analog path, and no receiver anywhere.
+
+**What it establishes.** The path does nothing gross. The capture runs at exactly
+8000 samples/s, 0.03% of samples are exact zeros, there are no steps or dropouts,
+the level is −25.9 dBFS — the same figure our receiver reports on live calls — and
+out-of-band energy is 16 to 33 dB down with nothing spurious in it. Before any
+equalisation the recording correlates 0.72 to 0.90 with what was sent. One
+incidental number: our sample reaches the far ADC 613 ms later, with the two
+clocks 46 ppm apart, though that includes the modem's own voice buffering and is
+not a network latency figure.
+
+**What it cannot establish, which took three tries to admit.**
+
+*First try.* Run our own receiver over the capture. It read 9.2% at 14 400 —
+strikingly close to the 9.4% live calls report, and it would have been written
+down as confirmation. The control says otherwise: the same method reads **13% at
+12 000**, on a path a real 12 000 call reads **1.4%** on. `_Rx` with `to_data()`
+called cold never trains; in `eyewin.py` it is primed by eleven seconds of real
+handshake first. The number was our receiver's cold acquisition, not the channel.
+
+*Second try.* Drop the receiver and fit the capture against the reference — best
+41-tap linear filter per block, so delay, gain and frequency response all come
+out and only noise and nonlinearity are left. That gives 11.24% at 14 400. And
+11.16% at 12 000. Two different signals, agreeing to within 0.1%, which is this
+document's own standing signature for having measured the instrument.
+
+*Third try, as calibration rather than measurement.* A pure 1800 Hz tone, which a
+linear path predicts exactly, comes back at **7.13%** residue with a raw
+correlation of 0.993. That is the floor, and it is the recorder: a voice-mode
+front end is not the path a data receiver uses, and it has no obligation to be
+linear or quiet.
+
+| through the voice-mode capture | unexplained residue |
+|---|---|
+| pure 1800 Hz tone | **7.13%** |
+| 12 000 data | 11.16% |
+| 14 400 data | 11.24% |
+
+So the experiment resolves gross faults and not fine ones. It would have caught a
+dropout, a gain problem or a spurious tone. It cannot distinguish a channel at 1%
+from one at 9%, which is exactly the distinction that was wanted.
+
+**The ATA is ruled out anyway, by a control that already existed.** The identical
+path — same box, same FXS port, same codec, the same evening — carries **12 000 at
+1.4% residual for 83 seconds at 90% of the channel in both directions**. The box
+sees 8 kHz A-law either way and cannot know what constellation is inside it, so
+whatever fails at 14 400 cannot be something the ATA does to 14 400. The negative
+result stands; it just rests on the rate contrast rather than on the capture.
+
+Worth stating plainly, because it is the third instrument failure in one
+investigation and the first two both produced numbers that agreed with the
+hypothesis being tested: **a measurement that confirms what you expect is the one
+that most needs a control.** The cold receiver said 9.2% against an expected 9.4%.
+The fit said 11.2% against an expected margin of 11.0%. Both were noise from the
+apparatus, and both would have been believed without a rate to compare against.
+
 ## Tools
 
 In `testrig/tools/`. Credentials are read from `ata.md` by `sipcfg.py` (or `SIP_HOST` / `SIP_USER`
@@ -305,6 +369,13 @@ In `testrig/tools/`. Credentials are read from `ata.md` by `sipcfg.py` (or `SIP_
 | `orch.py` | Orchestrates: arm a modem over SSH, then call it from `**620` |
 | `orch_in.py` | Orchestrates: start the answerer, then make a modem dial `**620` |
 | `listen.py` | Pi-side helper (also at `~/modemprobe/listen.py`): resets a modem, sets options, holds DTR high and logs everything it says |
+| `vcap.py` | Pi-side: dial in voice mode and record what arrives at the analog port. Unlike `~/modemprobe/voicecap.py` it opens the DTE fast enough for the codec — 16-bit linear at 8 kHz is 16000 byte/s and a 115200 port carries 11520, so the stock version dropped 28% of its samples without saying so. It prints achieved against expected rate |
+
+Two more live in `softmodem/`, because they need the modulator and the G.711 tables:
+`playraw.py` answers a call and plays a real V.32bis data-phase signal at any rate,
+and `chanfit.py` fits a capture against the reference it was played from. Read
+`chanfit.py`'s docstring before trusting a number out of it — it has a floor and
+it has a maximum block length, and both were found the hard way.
 
 Usage:
 
