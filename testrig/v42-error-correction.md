@@ -295,6 +295,108 @@ The Conexant figure is from after a retrain, which is why its frame counts are
 worse: three bad FCS, two oversize, 75 retransmissions. The 91% is what got
 through in spite of that.
 
+### The same lesson, a second time, in the other direction
+
+Every absolute figure in the table above is the *modem to us* direction. Our own
+transmit direction was measured later, with the rate caps lifted, and it came out
+at **898 byte/s — at 9600 and at 12000 alike**. Same tell as before, same
+conclusion available for the reading, and it was misread anyway.
+
+The hypothesis was the LAPM window, and it fitted well enough to be believed. The
+Cirrus negotiates `N401 64/64, k 15/15`, so 15 frames of 64 octets is 960 octets
+in flight; 960 octets per 1.1 s round trip is 873 byte/s. A window is exactly the
+kind of thing that produces a rate-independent ceiling, and `V(S) 119 V(A) 106`
+said 13 of the 15 were outstanding when the call ended.
+
+**It was not the window.** The measurement that settles it is throughput against
+round trip, because the two candidates predict different shapes: a window that
+counts frames in flight gives `min(L, W/RTT)`, flat until the window is smaller
+than the bandwidth-delay product; a window also consumed by frames still sitting
+in our own transmit queue has to cover the drain as well, giving
+`1/(1/L + RTT/W)`, which falls away from the start. Offline, over a clean channel
+with a delay line:
+
+| round trip | 40 | 240 | 440 | 840 ms |
+|---|---|---|---|---|
+| measured | 11 455 | 11 467 | 11 470 | 11 474 bit/s |
+
+Flat, against a framing-adjusted ceiling of 11 549, and still 11 246 with both
+directions saturated at once. The queue-consuming model predicts about 8 440 at
+440 ms. The window slides on each acknowledgement the way 8.4.1 intends.
+
+The ceiling was one slice in the harness. `(pat + pat)[i:i + a.feed]` cannot
+return more than `len(pat)` octets, so with a 9-octet `--send SLOPMODEM` every
+20 ms frame carried 18 whatever `--feed` said — and because the chunk was then
+exactly 18, `i = sent % 9` stayed pinned at 0 for the whole call. 18 octets per
+frame is 900 byte/s, 7 200 bit/s, identical at every line rate. The bug bites
+only when `--feed` exceeds `2 * len(pat)`, which is why it had gone unnoticed:
+the cap is invisible with a long enough pattern.
+
+So this is the `s.read(4000)` lesson twice, in opposite directions, and the second
+time the tell was recognised and then attributed to the subject rather than the
+instrument. The rule wants strengthening: a rate-independent number means
+*calibrate the instrument*, and the calibration has to be an experiment the
+instrument cannot pass by accident. `test_v42.py` now runs one — throughput
+against round trip over a delay line, which the other link tests could never see
+because they swap bit vectors with no delay at all, and with no delay the window
+can never be the thing that binds.
+
+With the feeder able to fill a frame, both directions run at the line:
+
+| | modem → soft | soft → modem | frames |
+|---|---|---|---|
+| **12000** V.32bis trellis, 83.2 s | 1352 byte/s = **10 818 bit/s (90%)** | 1349 byte/s = **10 789 bit/s (90%)** | 1760, **none discarded** |
+| **9600** V.32 non-redundant, 83.9 s | 1082 byte/s = **8 659 bit/s (90%)** | 1068 byte/s = **8 545 bit/s (89%)** | 1421, **none discarded** |
+
+100% printable both ways, no resends, no T401 expiries, and 4 096 octets still
+queued at the end of each — backpressured against the line rather than starved by
+the feeder, which is the state a throughput measurement should end in.
+
+**One thing above is now unreconciled.** The claim opening this section — that our
+transmit direction "runs at 89 to 96% of the channel" — cannot be squared with a
+feeder that could not exceed 900 byte/s, which is 75% at 9600 and was in the code
+from the first commit. Either those runs used a longer `--send` pattern, in which
+case the cap never applied to them, or the percentage was a delivery ratio rather
+than a fraction of capacity. The invocations were not recorded, so it cannot be
+settled from what is here. It is left standing and flagged rather than quietly
+rewritten.
+
+And a note on what "90% of the channel" can even mean: the ceiling is set by
+framing, five octets per `N401`, so it is `N401/(N401+5)` of the line — 96% at the
+default 128 and 93% at the 64 the Cirrus negotiates. The 90% figures above are 97
+to 99% of the ceiling that was actually available, not 90% of an achievable 100%.
+
+### V.14 has no backpressure, and needs pacing rather than a bound
+
+Lifting the feeder cap exposed a second defect in the same three lines. The gate
+read `m.ec is None or (up and outq < 4096)`, so with no error-correcting entity it
+was unconditionally open. V.42 has a window to push back with; V.14 has nothing —
+no window, no retransmission, nothing downstream that can say stop. `--feed 64`
+offers 3 200 char/s into a channel carrying 1 200, the converter's queue runs past
+its hiwater, and it begins deleting *every* stop bit, which is a stream the far
+framer cannot acquire on. It measured **27.9% printable** and looked like a line
+fault. The 18-octet cap had been holding V.14 runs under the line rate by
+accident, which is the only reason they had always read clean.
+
+Bounding the queue is necessary and not sufficient. At 64 characters we stopped
+filling RAM and deleted no stop bits at all — and the far end still read **54.6%
+printable with no recoverable pattern**, because a bound still permits offering
+*exactly* the line rate, and V.14 at exactly the line rate leaves the two clocks
+no margin. `dte.AsyncEncoder`'s docstring already said so about the slips that came
+back from the Conexant; the fix had to be pacing, not just a ceiling.
+
+Paced to 95% of the line's own character budget — `rate/500` characters per 20 ms
+frame, V.14 spending ten bits on eight — and bounded as well:
+
+| feeder | our transmit | what the far DTE saw |
+|---|---|---|
+| original 18-octet cap | 900 byte/s | clean, but a 7 200 bit/s ceiling |
+| cap lifted, queue bounded only | line rate, no margin | 54.6% printable, no pattern recoverable |
+| cap lifted and paced | 86 174 chars, **0 stop bits deleted** | 94% printable, **37 555 of 37 555 correct**, BER 0 |
+
+The 94% rather than 100% is one 5.5 retrain at 14 s diluting the ratio; the
+pattern check runs on the longest clean run and is exact.
+
 ### The Conexant retrains at 14.2 seconds, and why
 
 Six runs triggered a 5.5 retrain 5.3 to 5.9 s after the data phase opened — at

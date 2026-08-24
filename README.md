@@ -17,8 +17,13 @@ Working, against two USB modems (a Conexant CX93010 and a Cirrus CL-MD56xx):
 | **V.42** | HDLC framing, detection phase, LAPM, XID |
 | echo cancellation | for the hybrid on the far side of the box |
 
-Best measured: V.32 at 9600 non-redundant carrying V.42 at **9183 bit/s, 96% of
-the channel**, 513 frames with none discarded.
+Best measured: V.32bis at 12000 trellis coded, carrying V.42 in **both directions
+at once for 83 seconds** — 10 818 bit/s in and 10 789 bit/s out, 90% of the
+channel each way, 1760 frames with none discarded and no retransmissions. At 9600
+non-redundant the same configuration reaches 9183 bit/s, 96% of the channel.
+
+14400 negotiates on every attempt and will not hold: a 5.5 retrain every 7 to
+13 seconds. See `testrig/v42-error-correction.md`.
 
 ## Layout
 

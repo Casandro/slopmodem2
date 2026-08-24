@@ -4,7 +4,7 @@ Everything here is checkable without a line, and most of it is checkable against
 something the Recommendation prints rather than against our own arithmetic: the
 two FCS residues, and the detection-phase bit patterns.
 """
-import sys
+import collections, sys
 import v42
 
 FAIL = []
@@ -20,6 +20,63 @@ def check(name, cond, detail=""):
 def bits(s):
     """A bit list from a string like '0 1000 1000 1', as the spec prints them."""
     return [int(c) for c in s if c in "01"]
+
+
+def link_throughput(rate=12000, rtt_ms=440, secs=12.0, both=False, dt=0.02):
+    """Octets a second across a clean two-entity link with a real round trip.
+
+    The other link tests here swap bit vectors between the two entities with no
+    delay at all, and with no delay the window can never be the thing that
+    binds -- so they cannot see a window that is being spent on frames still
+    sitting in our own transmit queue rather than in flight. This runs the same
+    pair over a channel of rate*dt bits per 20 ms step with each direction
+    delayed by whole steps.
+
+    The distinction is worth a test because it was got wrong from the other
+    side: our transmit direction measured 898 byte/s against the Cirrus at both
+    9600 and at 12000, and the window was blamed for it -- 15 frames of 64
+    octets over a 1.1 s round trip fits that number almost exactly. The real
+    cause was a slice in the test feeder that could not put more than 18 octets
+    in a frame. Had this test existed, the window would have been ruled out in
+    a tenth of a second instead of over several calls.
+    """
+    A = v42.Link(originator=True)
+    B = v42.Link(originator=False)
+    A.connect(0.0)
+    n = int(rate * dt)                              # bits the line carries
+    d = int(round((rtt_ms / 1000.0) / dt / 2))      # one-way delay, in steps
+    qa = collections.deque([[] for _ in range(d)])  # bits heading for A
+    qb = collections.deque([[] for _ in range(d)])
+    pay = b"SLOPMODEM" * 512
+    t = 0.0
+    got = 0
+    first = last = None
+    for _ in range(int(secs / dt)):
+        t += dt
+        if len(A.lapm.outq) < 4096:
+            A.send(pay)
+        if both and len(B.lapm.outq) < 4096:
+            B.send(pay)
+        # Pop before appending, so the shortest round trip modelled is 2 * dt.
+        ia = qa.popleft() if qa else []
+        ib = qb.popleft() if qb else []
+        oa = A.step(ia, n, t)
+        ob = B.step(ib, n, t)
+        qb.append(oa)
+        qa.append(ob)
+        k = len(B.received())
+        if k:
+            if first is None:
+                first = t
+            got += k
+            last = t
+    span = last - first if (first is not None and last > first) else secs
+    # 8.1: one address octet, two control, two FCS for every N401 of payload.
+    n401 = A.lapm.n401
+    return dict(bps=8.0 * got / span, rtt=2 * (d + 1) * dt,
+                resends=A.lapm.stats["resend"], t401=A.lapm.stats["t401"],
+                state=A.lapm.state,
+                ceiling=rate * n401 / float(n401 + 5))
 
 
 if __name__ == "__main__":
@@ -668,6 +725,34 @@ if __name__ == "__main__":
           connected_after_xid == 1)
     check("  and user data crosses the link afterwards",
           bytes(got) == txt, "%r" % bytes(got)[:52])
+
+    print()
+    print("8.4.1 the window counts frames in flight, not frames queued")
+    # A window consumed by our own queued frames would have to cover the drain
+    # as well as the flight, giving 1/(1/L + RTT/W) -- about 8440 bit/s at
+    # 440 ms here, against a line that carries 11549. The measurement that
+    # separates the two is throughput against round trip: flat if the window
+    # slides on each acknowledgement, falling away if it does not.
+    runs = [link_throughput(rate=12000, rtt_ms=ms) for ms in (40, 240, 440, 840)]
+    for r in runs:
+        check("  %3.0f ms round trip still reaches the line rate"
+              % (1000 * r["rtt"]), r["bps"] >= 0.90 * r["ceiling"],
+              "%.0f bit/s of %.0f" % (r["bps"], r["ceiling"]))
+    lo = min(r["bps"] for r in runs)
+    hi = max(r["bps"] for r in runs)
+    check("  and does not fall away as the round trip grows",
+          lo >= 0.95 * hi,
+          "%.0f to %.0f bit/s across 40..840 ms" % (lo, hi))
+    check("  with no retransmissions or T401 expiries on a clean channel",
+          all(r["resends"] == 0 and r["t401"] == 0 for r in runs))
+    r = link_throughput(rate=12000, rtt_ms=440, both=True)
+    check("  and reaches it with both directions saturated at once",
+          r["bps"] >= 0.90 * r["ceiling"],
+          "%.0f bit/s of %.0f" % (r["bps"], r["ceiling"]))
+    r = link_throughput(rate=9600, rtt_ms=440)
+    check("  the same at 9600, where the rig read the same 898 byte/s",
+          r["bps"] >= 0.90 * r["ceiling"],
+          "%.0f bit/s of %.0f" % (r["bps"], r["ceiling"]))
 
     print()
     if FAIL:
