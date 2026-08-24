@@ -3,6 +3,19 @@
 Our receiver is the same for every capture, so the *within-call* difference
 between the two legs is immune to whatever varies between calls -- which is the
 only comparison that can attribute a fault to a modem rather than to a call.
+
+**Read the caveat before quoting a number from this.** It reports the last 4000
+data symbols of a capture, and where a call ends is not where it is
+representative. Measured against `eyewin.py`, which windows the same captures
+from signal E onwards, a bridge capture of the Cirrus at 12 000 reads **2.0% in
+the first window and 12.9% in the tail** -- a factor of six, in a link that had
+simply come apart by the end because the far modem could not hold it. Any single
+figure out of this file is that tail, and the figures quoted from it in
+v32-ans-path.md's swapped 2x2 carry the same caveat.
+
+The within-call comparison the docstring above describes is still sound, because
+both legs are measured the same way at the same instant. It is the absolute
+numbers that need a window chosen on purpose. Use `eyewin.py` for those.
 """
 import sys
 import g711, v32, v32fsm

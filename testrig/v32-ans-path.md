@@ -2883,6 +2883,66 @@ until both modes appear in one sitting. What can be said now is that the fault i
 not on our side of the line, and that the list of things checked to establish that
 is long enough to be worth trusting.
 
+### The bridge captures, which answered it and cost the 2x2 its numbers
+
+Nine runs back to back in one sitting, six at 14 400 and three at 12 000 as the
+control, Cirrus dialling so it is leg A. A bridge capture is the right instrument
+for this because **our modulator is not in the path at all** -- the two modems
+talk to each other and we only relay -- so what it measures is one transmitter
+through one fixed receiver.
+
+The first attempt went straight into the trap this file had already documented
+twice. `eye.py` reports the last 4000 data symbols, and the six 14 400 runs came
+out at 8.41, 8.96, 9.13, 9.48, 9.19 and 9.10% -- tight, unimodal, no sign of the
+two states the hypothesis predicted. Then the control: the same measurement at
+12 000 read **11.54, 11.96 and 12.59%**, which is worse than 14 400 on the same
+path, and impossible. Lower-order constellations do not decode worse through the
+same channel. The raw medians say the same thing -- 0.748 to 0.816 at 12 000
+against 0.539 to 0.607 at 14 400 -- so it is not a normalisation artefact.
+
+Windowing the captures from signal E instead of taking the tail explains it. At
+12 000 the Cirrus's transmit reads **2.0% in the first five seconds and then 12.4
+to 13.9% for the rest of the call**, with timing rock stable at −43 ppm
+throughout. The link comes apart after the data phase opens -- the far modem here
+is the Conexant, whose 12 000 transmit this file measures at 12.9%, close enough
+to the 15.4% margin that it struggles, and a modem that cannot hold its receive
+sends retrain requests. We then decode a held carrier state as though it were
+data, which is what the 12.9% tail actually is.
+
+With both captures read at the same point in the call, the comparison is clean:
+
+| Cirrus transmit, first window after signal E | residual | margin |
+|---|---|---|
+| 12 000 | **2.0%** | 15.4% |
+| 14 400 | **9.7%**, and 8.9 to 9.9% for the whole call | 11.0% |
+
+**That is the answer.** The Cirrus's 14 400 signal arrives at about 9% of
+amplitude in residue, from the first window, with our transmitter nowhere in the
+path and our receiver reading 2.0% on the same instrument in the same session at
+one rate down. It is not our receiver, and it is not the channel, because the
+channel carries 12 000 from the same modem minutes earlier at a fifth of the
+noise. It is what the far end puts on the line at 14 400, and 9% against an 11.0%
+margin is why nothing holds.
+
+**And the bimodality was never there.** Six runs in one sitting span 8.41 to
+9.48%, which is ±0.5 points about a mean of 9.05 and not two states. The earlier
+1.9 / 9.2 / 3.0 / 8.8 / 1.3 / 1.3 spread that suggested it was measured with the
+tail window, and today's captures show the tail differing from the settled window
+by a factor of six in a link that decays. Those six numbers are most likely six
+different amounts of decay, not two modes of a transmitter.
+
+Which costs the swapped 2×2 above its absolute figures. Its *comparative*
+conclusion survives -- both legs were measured the same way at the same instant,
+and that is what attributes a fault to a modem rather than to a call -- but the
+individual medians in it are tail readings and should not be quoted as the
+quality of anyone's transmitter. `eye.py` now says so in its docstring, and
+`eyewin.py` is the tool for an absolute number.
+
+For the third time in this file, and it is worth stating as plainly as possible
+because it keeps costing whole experiments: **where a measurement window falls is
+part of the measurement.** The end of a call is where the link is worst, which is
+precisely why the call ended.
+
 ## The race for signal E
 
 Dial-in from the Cirrus was reaching the data phase about three times in four. The
