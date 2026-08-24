@@ -2581,7 +2581,7 @@ to loop bandwidth — for three experiments before I took the hint.
 |---|---|---|---|
 | 4800, 7200, 9600 | decoded by both | clean from both | works |
 | 12 000 | decoded by the Conexant (585-char run) | clean from the **Cirrus** (1.3%, 0 framing errors); fails from the Conexant | works, with the right far end |
-| 14 400 | decoded by the Conexant | fails from the Conexant | does not hold with either: the Conexant's transmitter is too noisy for us, the Cirrus's receiver cannot decode our trellis at all |
+| 14 400 | decoded by **both** (see below) | fails from the Conexant | does not hold with either, but not for one reason: both directions are marginal at once |
 
 Neither remaining failure is ours. That is a different and better answer than "our
 receiver needs work", and the only way to get it was to stop measuring against one
@@ -2595,6 +2595,64 @@ Each time the diagnosis needed a **second reference** — a second modem, a brid
 call, another transmitter — and each time the single-reference reading pointed at
 our own code. One measurement against one peer cannot tell you which end owns a
 defect, however carefully it is made.
+
+### 14 400 again, with fourteen calls instead of one
+
+The table above says "the Cirrus's receiver cannot decode our trellis at all".
+That is wrong, and it took repetition to see it. In fourteen calls at 14 400 —
+against both modems, three transmit levels and two feed rates — **two** delivered
+our transmission to the far modem's own DTE, and both delivered it *exactly*:
+
+| | our transmit at the far DTE |
+|---|---|
+| `r14400b`, Cirrus | **35 304 of 35 304 characters**, character error rate 0 |
+| `cx12000b`, Conexant | **949 of 949 characters**, character error rate 0 |
+| the other twelve | 10 to 17 characters, which is the length of `NO CARRIER` |
+
+So our 14 400 transmitter is not rejected by the Cirrus and is not malformed.
+Both vendors' receivers decode it perfectly when they decode it at all. What it is
+not is *reliable*: two calls in fourteen.
+
+**Two candidates, both measured and both refuted.**
+
+*Transmit level.* −24, −18 and −12 dBFS, interleaved rather than blocked so a drift
+in the line could not pass as a level effect. Five valid calls, and our transmit
+went undelivered at every level; the level we received stayed pinned at −25 dBFS
+throughout, so 12 dB of our transmit range changed nothing at either end.
+
+*The V.14 offered rate.* The one call that worked was also the only 14 400 call
+made before the feeder was paced, so it had offered 900 char/s where the later ones
+offer about 1370 of a 1440 ceiling — a tempting explanation. A/B at `--feed 18`
+against `--feed 64`, two calls each: 14 characters delivered in all four, with the
+same four far-end retrain requests per call. The feed rate is not the variable
+either.
+
+**What does distinguish the two modems** is which direction gives out first. With
+the Cirrus almost every retrain is `the far end is holding a carrier state` — it
+asking *us* to retrain, four times a call. With the Conexant almost every retrain
+is `our own receiver has lost lock`. Both directions are marginal at 14 400; which
+one trips first is a property of the far end, not of a defect on one side.
+
+**One measurement here is not what it looks like**, and it is worth recording
+because it was quoted as evidence before being checked. The eye statistic printed
+at the end of a call takes the last 4000 data symbols, and `data_syms` is cleared
+on every retrain. At 12 000 that is 1.7 s of steady state out of an 83 s data
+phase. At 14 400 the data phase lasts about three seconds, so the same statistic
+is the 1.7 s *immediately preceding a collapse*, every time. The 9.4% residual it
+reports at 14 400 and the 1.4% it reports at 12 000 are not measuring comparable
+things, and the difference between them is mostly the window. The unbiased number
+for the Cirrus at 14 400 remains the passive bridge capture: 0.122 median, 1.9%,
+comfortably inside the 11.0% margin.
+
+Which leaves the honest answer to "why does 14 400 not work" as: **the margin is
+11.0% and everything on this path sits near it.** Not a defect, not a rate the
+code cannot do — 12 000 runs at 90% of the channel in both directions for 83
+seconds on the same rig, on the same day, with the same build. One rate up, the
+constellation doubles at the same rms radius, the margin falls to 11.0%, and the
+link stops holding in one direction or the other within seconds. The single call
+that carried 35 304 clean characters says the equipment can do it; twelve that
+carried nothing say we cannot reach that state on purpose, and nothing measured so
+far says what puts it there.
 
 ## The race for signal E
 
