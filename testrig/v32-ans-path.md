@@ -1295,10 +1295,83 @@ Reset and asked again. `AT&F` on both, then `AT+MS=?`:
 Both default to V.90/V.92 automode, and the V.32bis token is `V32B`. Both accept
 `AT+MS=V32B,0,4800,14400` and read it back.
 
+### The cap was not lifted, it was moved — and the same mistake was in the fix
+
+`AT+MS=V32B,0,4800,14400` reads back as a *range*, and it does not behave as one.
+The second field is automode, and with automode 0 the Cirrus advertises `max` and
+nothing else. `min` is inert. Every rate signal R2 measured under automode 0 —
+fifteen calls across four different `+MS` settings — was a **singleton equal to
+`max`**, never a set:
+
+| modem `+MS` | R2 received | calls |
+|---|---|---|
+| `V32,0,9600,9600` | `[9600]` | 2 |
+| `V32B,0,4800,9600` | `[9600]` | 1 |
+| `V32B,0,4800,12000` | `[12000]` | 7 |
+| `V32B,0,4800,14400` | `[14400]` | 5 |
+| `V32B,0,4800,14400` | `[]` cleardown | 4, where our R1 omitted 14400 |
+
+So `AT+MS=V32B,0,4800,14400` is not "anything from 4800 to 14400". It is 14400,
+written in a way that looks like a range and reads back like one. The rate was
+still being asked for in the question — one rate instead of one rate — and the
+only thing the wider bounds bought was a *different* fixed answer.
+
+**How it surfaced.** Offering a subset in our own R1 — `--rates 4800,7200,9600` —
+drew an R2 with every rate bit zero, which `bis_parse_rate` reports as
+`rates []`, and the call died with `NO CARRIER`. That looks exactly like a defect
+in our rate signalling, and was provisionally recorded as one. It is not. §6
+requires R2 to "exclude rates not appearing in the previously received rate signal
+R1", and adds that if satisfactory performance "cannot be attained at any of the
+available data rates, then R2 should be used to call for a GSTN cleardown in
+accordance with Table 5/V.32 bis". A modem pinned to 14400 and handed an R1
+topping out at 9600 has no available rate at all, and an empty rate field is the
+conforming way to say so. Note 3 to Table 5 defines it: "B4-B6, B9-B10, B12 set
+to zero calls for a GSTN cleardown."
+
+**What separates the two explanations** is that "a subset is refused" and "an R1
+without the modem's one rate is refused" make different predictions for a subset
+that *does* contain it:
+
+| modem `+MS` max | our R1 offers | R2 | |
+|---|---|---|---|
+| 14400 | 4800, 7200, 9600, 12000 | `[]` cleardown | 2 of 2 |
+| 12000 | 4800, 7200, 9600 | no R2 at all, `NO CARRIER` | |
+| 14400 | 9600, 12000, 14400 | `[14400]` | a subset, and it works |
+| 14400 | 14400 alone | `[14400]` | one rate, and it works |
+
+A subset R1 is fine. Two of them negotiated, including a single-rate one. What
+fails is asking a modem pinned to one rate for a different one.
+
+**With automode 1 the exchange works as 5.4 describes it.**
+`AT+MS=V32B,1,4800,14400`, against an R1 offering 4800, 7200 and 9600, answers
+**`R2 [4800, 7200, 9600]`** — the intersection, as a set — and R3 selects 9600 and
+reaches the data phase. Twice.
+
+Which makes the guidance the opposite of what the orchestrator's own docstring
+implied. Only the *carrier* field has to be pinned, and for the reason that
+paragraph gives: unforced, both modems pick V.34 or V.90 and never reach 5.4.
+Automode is a separate field, and pinning it to 0 disables the rate negotiation
+the harness exists to exercise. Use automode 1 and choose with `--rates`; use
+automode 0 only to hold the modem at exactly one rate on purpose.
+
+Worth stating plainly, because it is the second time in this file: **the fix for
+"the rate I measured was the rate I had asked for" contained the same defect.**
+Setting `+MS` explicitly is what removed the accidental 9600 cap, and setting it
+with automode 0 is what replaced it with an accidental 14400 one. A parameter that
+reads back exactly as written is not evidence that it means what it looks like.
+
+One thing this cleared rather than found: our R1 encoding was checked against
+Table 5/V.32 bis directly and is bit-exact — B4 and B8 both 1 as the V.32bis
+marker per Note 1, B5 4800, B6 9600, B9 7200, B10 12 000, B12 14 400, B13 and B14
+zero, sync in B0-B3, B7, B11, B15. Every subset round-trips through our own
+parser, and the 4800+9600 case still differs from its V.32 equivalent in exactly
+bits 4 and 8. The suspicion fell on the encoder because a real modem rejected
+something; the encoder was right and the AT command was the problem.
+
 ### At 14400 the Conexant's transmitter gives out
 
-With the cap lifted they negotiate the top rate, and the Cirrus's signal E says so
-outright:
+With the cap moved up to 14400 they negotiate the top rate, and the Cirrus's
+signal E says so outright:
 
 | | rate signal | signal E | data phase at 14400 |
 |---|---|---|---|

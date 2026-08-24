@@ -44,7 +44,11 @@ def main():
                          "extending it")
     ap.add_argument("--trellis", action="store_true",
                     help="advertise trellis coding in B8")
-    ap.add_argument("--rates", default="4800,9600")
+    ap.add_argument("--rates", default="4800,9600",
+                    help="the rates our R1 offers. 5.4.2 selects "
+                         "max(offered & ours), so the default caps the link at "
+                         "9600 however much the far end offers; --bis without "
+                         "this is still a 9600 link")
     ap.add_argument("--regain", type=int, default=None,
                     help="frames of shut eye before re-measuring the gain; "
                          "0 disables it")

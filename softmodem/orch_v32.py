@@ -1,8 +1,28 @@
 """Run our V.32 start-up against a hardware modem: answerer here, dialler on the Pi.
 
-The modem has to be forced to V.32 first. Left in automode both of these pick
-V.34 or V.90 and never reach 5.4 at all -- the Conexant lists V32 in AT+MS=? and
-the Cirrus takes AT+MS= without advertising it.
+The modem's *carrier* has to be forced to V.32 or V.32bis first. Left to choose
+for itself both of these pick V.34 or V.90 and never reach 5.4 at all -- the
+Conexant lists V32 in AT+MS=? and the Cirrus takes AT+MS= without advertising it.
+
+That is the first field of AT+MS, and it is the only one that has to be pinned.
+The second field, automode, is a different question, and setting it to 0 quietly
+disables the rate negotiation this harness exists to exercise:
+
+  AT+MS=V32B,0,4800,14400   the Cirrus advertises 14400 in R2 and nothing else.
+                            min is ignored; every R2 measured under automode 0
+                            was a singleton equal to max. So an R1 from us that
+                            does not offer that one rate leaves no rate in
+                            common, and V.32bis section 6 makes a cleardown R2
+                            the conforming answer -- which is what arrives, and
+                            which looked for a while like a bug in our own rate
+                            signalling.
+  AT+MS=V32B,1,4800,14400   the same modem answers R2 [4800, 7200, 9600] to an
+                            R1 offering those three, which is the intersection
+                            5.4 asks for, and --rates then chooses.
+
+So use automode 1 to select a rate with --rates, and automode 0 only to pin the
+modem to exactly one rate and leave the choosing to it. Either way the carrier
+field does the work the first paragraph describes.
 
   python3 orch_v32.py --port /dev/ttyACM0 --trellis
 """
@@ -174,7 +194,10 @@ def main():
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--number", default="**620")
     ap.add_argument("--ms", default="V32,0,9600,9600",
-                    help="AT+MS argument: modulation, automode, min, max")
+                    help="AT+MS argument: carrier, automode, min, max. With "
+                         "automode 0 the modem advertises max and only max, so "
+                         "--rates cannot pick anything else; use automode 1 to "
+                         "let it offer a range (see the module docstring)")
     ap.add_argument("--seconds", type=float, default=50.0)
     ap.add_argument("--trellis", action="store_true")
     ap.add_argument("--ans", type=float, default=3.3)
@@ -184,7 +207,11 @@ def main():
                     "error rate of our transmitted signal")
     ap.add_argument("--bis", action="store_true")
     ap.add_argument("--regain", type=int, default=None)
-    ap.add_argument("--rates", default="")
+    ap.add_argument("--rates", default="",
+                    help="rates our R1 offers, passed to v32answer.py. 5.4.2 "
+                         "picks max(theirs & ours), so this only chooses "
+                         "anything when the modem offers more than one -- which "
+                         "needs automode 1 in --ms")
     ap.add_argument("--no-pattern", action="store_true",
                     help="stay idle after CONNECT instead of sending AAA2BBB")
     ap.add_argument("--dial", default="ATD",
