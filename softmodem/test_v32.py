@@ -702,6 +702,62 @@ if __name__ == "__main__":
           v32.parse_rate(v32.rate_sequence(can2400=True, trellis=True))["trellis"])
 
     print()
+    print("every trellis constellation, structurally")
+    # A few misplaced points out of 128 would look exactly like what 14400 does
+    # on the rig: mostly right, occasionally not, and invisible soft to soft
+    # because both ends share the error. These are properties a V.32bis
+    # constellation has whatever its figure looks like, so they can be asserted
+    # without reading 128 labelled points off a scanned diagram -- and 7200, 9600
+    # and 12000 all work against hardware, so they calibrate the check.
+    #
+    # Mean powers are the ones the transmit scale divides by, so an error here
+    # would also move the line level with the rate, which 5.2 does not allow.
+    EXPECT = {                    # points, d_min, rms radius, mean power
+        7200:  (16,  2.0,             math.sqrt(10.0), 10.0),
+        9600:  (32,  math.sqrt(2.0),  math.sqrt(10.0), 10.0),
+        12000: (64,  2.0,             math.sqrt(42.0), 42.0),
+        14400: (128, math.sqrt(2.0),  math.sqrt(41.0), 41.0),
+    }
+    for rate in sorted(EXPECT):
+        n_e, d_e, r_e, p_e = EXPECT[rate]
+        ts = v32.TRELLIS_SETS[rate]
+        P = list(v32.TRELLIS_MODES[rate].points)
+        n = len(P)
+        dmin = min(abs(a - b) for i, a in enumerate(P) for b in P[i + 1:])
+        rms = math.sqrt(sum(abs(z) ** 2 for z in P) / n)
+        power = sum(abs(z) ** 2 for z in P) / n
+        uniq = len(set((round(z.real, 9), round(z.imag, 9)) for z in P))
+        check("%5d: %d distinct points, 2^%d of them"
+              % (rate, n_e, ts.nbits),
+              n == n_e and uniq == n and 2 ** ts.nbits == n,
+              "%d points, %d distinct" % (n, uniq))
+        check("       d_min %.4f and rms radius %.4f" % (d_e, r_e),
+              abs(dmin - d_e) < 1e-9 and abs(rms - r_e) < 1e-9,
+              "%.4f, %.4f -> margin %.1f%%" % (dmin, rms, 100.0 * (dmin / 2) / rms))
+        check("       mean power %.0f, so the line level does not move with rate"
+              % p_e, abs(power - p_e) < 1e-9, "%.2f" % power)
+        # Table 1's differential quadrant coding needs the set to be its own
+        # image under a quarter turn, or a rotation cannot be undone by relabel.
+        S = set((round(z.real, 6), round(z.imag, 6)) for z in P)
+        R = set((round((z * 1j).real, 6), round((z * 1j).imag, 6)) for z in P)
+        check("       closed under a 90 degree rotation", R == S,
+              "%d of %d land outside" % (len(R - S), n))
+        # Ungerboeck's partition: same Y0Y1Y2 is one subset, and the whole point
+        # is that distance inside a subset is far above d_min. A point in the
+        # wrong subset collapses this and costs the coding gain.
+        subs = {}
+        for key in range(2 ** ts.nbits):
+            b = tuple((key >> (ts.nbits - 1 - i)) & 1 for i in range(ts.nbits))
+            subs.setdefault(b[:3], []).append(
+                ts.point(b[0], b[1], b[2], key & ((1 << (ts.nbits - 3)) - 1)))
+        within = min(min(abs(a - b) for i, a in enumerate(v) for b in v[i + 1:])
+                     for v in subs.values() if len(v) > 1)
+        check("       8 subsets, distance within one is 2*sqrt(2) * d_min",
+              len(subs) == 8 and abs(within - 2 * math.sqrt(2) * dmin) < 1e-9,
+              "%d subsets, %.4f = %.2f x d_min"
+              % (len(subs), within, within / dmin))
+
+    print()
     if FAIL:
         print("%d FAILURES: %s" % (len(FAIL), "; ".join(FAIL)))
         sys.exit(1)
