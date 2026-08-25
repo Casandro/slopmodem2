@@ -1543,6 +1543,20 @@ class OriginateStartup(_Base):
             # Note 1 to 5.4.2: proceed on the 600/3000 pair even without 2100 Hz
             if is_pair(e):
                 self._ev("600/3000 Hz pair detected - transmitting state A")
+                # The far end's level starts here, and not before. Everything
+                # earlier is pre-answer: ringback, network tones, whatever the
+                # box plays while the extension is still ringing. On this rig
+                # ringback arrives at -10.4 dBFS against the modem's -24, so a
+                # peak tracker that has seen it sits 26x above every signal that
+                # matters, and `live` -- which gates the S latch and therefore
+                # opening the receiver at all -- stays shut while lvl_peak decays
+                # at 0.999 a frame. That is 65 s, and the far end gives up at 60:
+                # the first originated call ever made from this code sat in WAITS
+                # for ninety seconds with a perfectly good S, TRN and R1 going
+                # past it. The answer side never had the problem because it never
+                # hears ringback.
+                self.lvl_peak = e[0]
+                self.sig_ref = None
                 self._goto(AA)
                 self._send_states(["A"] * 60000)
                 self.rev600.at = []

@@ -2963,67 +2963,67 @@ which is the role that transmits at six to nine per cent, against a margin of
 That is a prediction, and the rig can test it: originate from our side instead, so
 the modem answers, and 14 400 should hold.
 
-### Trying it, and finding the caller has never met a real answer tone
+### Trying it, and finding the caller had never met hardware at all
 
-`orch_orig.py` turned out to be the wrong tool -- it drives `run_originate.py`,
-which is the V.8 originator, not the V.32 data path. Nothing in the repository
-ran `OriginateStartup` against hardware at all: `grep` finds it in `v32fsm.py`,
-`test_v32start.py` and `v32bis_rates.py`, which is to say soft to soft and
-nowhere else. Every live call in this project has had the modem dialling, so the
-*answering* half of our V.32 has been tested against two real modems for weeks
-and the *calling* half has never left the loopback.
+`orch_orig.py` was the wrong tool -- it drives `run_originate.py`, the V.8
+originator, not the V.32 data path. Nothing ran `OriginateStartup` against
+hardware at all: it appears in `v32fsm.py`, `test_v32start.py` and
+`v32bis_rates.py` and nowhere else. Every live call in this project has had the
+modem dialling, so the *answering* half of our V.32 has faced two real modems for
+weeks and the *calling* half had never left the loopback. `v32call.py` is the
+missing piece: the same frame-by-frame body as `v32answer.py`, with the SIP leg
+placed rather than received and `OriginateStartup` in `AnswerStartup`'s place.
 
-`v32call.py` is that missing piece: the same frame-by-frame body as
-`v32answer.py`, with the SIP leg placed instead of received and `OriginateStartup`
-in place of `AnswerStartup`. It places the call fine, and then this happens:
+**Ringback set the far end's level, and that cost the whole call.** The first
+attempt sat in `WAITS` for ninety seconds. The first diagnosis was that `WAITANS`
+had mis-fired on the 2100 Hz answer tone; that was wrong, and checking it against
+the capture is what corrected it. Feeding the recorded audio back through
+`is_pair()` says the 600/3000 pair genuinely arrives at 3.82 s, the reversals at
+4.16 and 4.42, and an S sequence at 5.0 -- a complete and correct answerer. Our
+caller had done the right thing at every step.
 
-```
-  [ 2.623] WAITANS 600/3000 Hz pair detected - transmitting state A
-  [ 2.964] AA      first phase reversal at 10010T - timer on, AA->CC in 64T
-  [ 3.219] CC      second phase reversal at 10620T - timer stopped, NT = 624T
-  [ 3.219] CC      -> WAITS (silent, waiting for an incoming S)
-```
+What it could not then do was open its receiver. That is gated on `live`, which
+compares the frame against `lvl_peak`, a decaying peak tracker -- and `lvl_peak`
+had been set by **ringback at −10.4 dBFS**, against a modem signal at −24:
 
-and then nothing for the remaining ninety seconds. The modem's own log says
-`RING` and, sixty seconds later, `NO CARRIER`.
-
-The recorded audio says the modem was never the problem. Reading the capture a
-second at a time:
-
-| t | what is on the line |
+| | mean square |
 |---|---|
-| 0.5 s | 425 Hz at −10.4 dBFS — ringback |
-| 1.5 to 3.5 s | **2100 Hz** — the answer tone; the modem picked up at about 1 s |
-| 5 s onward | broadband and changing — the modem transmitting its half of 5.4 |
+| ringback, 0.5 s | 98 404 686 |
+| the modem's signals | ~3 700 000 |
 
-So the far end answered and worked through its start-up for the whole call, while
-we sat in `WAITS`. Our caller announced "600/3000 Hz pair detected" at 2.62 s
-against a line carrying 2100 Hz, and then took **the answer tone's own phase
-reversals** -- 0.34 s and 0.25 s apart -- for the answerer's AC-to-CA transitions,
-started and stopped its NT timer on them, and ceased transmitting. By the time the
-answerer actually sent its conditioning signal we were waiting for something that
-had already been mis-identified.
+Twenty-six times too high, decaying at 0.999 a frame, so `live` stays false for
+about sixty-five seconds. The far end gives up at sixty. The S, the TRN and the
+R1 all went past a receiver that was never allowed to open. The answer side never
+had this because it never hears ringback: it is the called party.
 
-None of that can happen soft to soft, because there our answerer's tone is what
-our caller was written against. It needs a real one, and the FRITZ!Box makes it
-realer still: `sip-audio-path.md` records that the box regenerates anything near
-2100 Hz as its own unmodulated sine, so ANSam arrives as plain ANS with the
-amplitude modulation stripped and only the reversals left.
+The fix is one line and its comment: the far end's level starts when the answer
+sequence does, so `lvl_peak` is reset at the `WAITANS` to `AA` transition and
+everything before it -- ringback, network tones, whatever the box plays while the
+extension rings -- is discarded. With that, replayed against the same recording
+and then live against the modem:
 
-**So the role prediction is still untested**, and the reason is a defect on our
-side that this experiment found rather than the one it went looking for. The fix
-is bounded and the evidence is on disk: `WAITANS` has to wait out the answer tone
-rather than trigger inside it, and the reversal detectors must not arm until the
-2100 Hz has actually stopped. Until that is done, "why does 14 400 not work" keeps
-its answer of one experiment short.
+```
+  [ 3.811] WAITS   receiver opened at TRN
+  [ 6.130] WAITS   R1 received: rates [7200, 12000, 14400] (V.32bis)
+  [ 7.026] RC1     107 on; R2 offering [7200, 12000, 14400]
+  [ 7.246] R2TX    R3 received: [14400] bit/s (V.32bis)
+  [ 7.246] ETX     -> B1TX (scrambled ones at 14400 bit/s, trellis coded)
+```
 
-Two caveats on the table above, because it is three sessions of data assembled
-after the fact. The earlier dialling figures for the Cirrus, 1.90 and 3.11, sit
-well below today's five, so role does not explain everything and the two sessions
-differ as well. And the six 14 400 runs today are one sitting with one leg
-assignment, which is exactly the design fault this file criticised in the original
-single-run attribution. Interleaved runs alternating the role, in one sitting,
-would settle it.
+**Our caller side negotiates 14 400 against a real modem, which had never
+happened before.** Seven seconds, start to finish.
+
+It does not yet reach the data phase. `B1TX` waits for the answerer's own signal
+E and it never arrives, so 109 stays off and the receiver stays in the four-point
+mode it decodes rate signals in. The same call at **12 000 stalls in exactly the
+same place**, which is the useful part: the remaining defect is rate-independent
+and therefore says nothing about 14 400. It is not the answer side's documented
+race for E either -- the caller's `_rescan()` happens in `_start_r2`, before R3,
+so the alignment E arrives on is the one from R3 and is not thrown away.
+
+So the role prediction is still untested, and the reason has moved: not the tool,
+not the answer tone, not `lvl_peak`, but a caller that sends its E and never sees
+the reply. That is the next thing to find, and there is a recording of it.
 
 For the third time in this file, and it is worth stating as plainly as possible
 because it keeps costing whole experiments: **where a measurement window falls is
