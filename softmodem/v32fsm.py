@@ -1540,9 +1540,30 @@ class OriginateStartup(_Base):
             self.rev3000.feed(x)
         st = self.state
         if st == WAITANS:
-            # Note 1 to 5.4.2: proceed on the 600/3000 pair even without 2100 Hz
-            if is_pair(e):
-                self._ev("600/3000 Hz pair detected - transmitting state A")
+            # 6.1: "After receiving the answer tone for a period of at least 1 s
+            # as specified in Recommendation V.25, the modem shall be connected
+            # to line ... and shall repetively transmit carrier state A."
+            #
+            # ans_hold and ans_run were here for that and were never wired to
+            # anything, so the only way out of WAITANS was Note 1's alternative
+            # -- proceed on the 600/3000 pair without waiting for 2100 Hz. That
+            # is legal and it is not what a real caller does. Measured against
+            # the modem in the calling role, it holds its 1800 Hz for 1.5 to 2 s
+            # before anything else happens; ours managed 0.35 s before the
+            # reversal and 0.26 s after it, because it could not start until the
+            # answerer's AC had already begun. 6.2 wants our tone present for 64
+            # symbol periods, on top of 128 symbol intervals of its own AC,
+            # before it will arm the reversal detector -- and that reversal is
+            # what defines NT and MT for both ends. Starting late hands the
+            # answerer a time reference from a schedule it is not on, and
+            # measured, it then never ceased transmitting, never read our R2 and
+            # never looked for our E.
+            if x and e[0] >= 1.0 and dsp.goertzel(x, 2100.0) / e[0] > 0.5:
+                self.ans_run += len(x) / float(SR)
+            if is_pair(e) or self.ans_run >= self.ans_hold:
+                self._ev("%s - transmitting state A"
+                         % ("600/3000 Hz pair detected" if is_pair(e)
+                            else "answer tone held for %.1f s" % self.ans_run))
                 # The far end's level starts here, and not before. Everything
                 # earlier is pre-answer: ringback, network tones, whatever the
                 # box plays while the extension is still ringing. On this rig
