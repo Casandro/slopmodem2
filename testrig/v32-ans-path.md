@@ -2961,9 +2961,61 @@ which is the role that transmits at six to nine per cent, against a margin of
 11.0%. The same modem answering transmits at one to two and a half.
 
 That is a prediction, and the rig can test it: originate from our side instead, so
-the modem answers, and 14 400 should hold. `orch_orig.py` exists. It has not been
-run at 14 400, and until it has, "why does 14 400 not work" has an answer that is
-one experiment short of established.
+the modem answers, and 14 400 should hold.
+
+### Trying it, and finding the caller has never met a real answer tone
+
+`orch_orig.py` turned out to be the wrong tool -- it drives `run_originate.py`,
+which is the V.8 originator, not the V.32 data path. Nothing in the repository
+ran `OriginateStartup` against hardware at all: `grep` finds it in `v32fsm.py`,
+`test_v32start.py` and `v32bis_rates.py`, which is to say soft to soft and
+nowhere else. Every live call in this project has had the modem dialling, so the
+*answering* half of our V.32 has been tested against two real modems for weeks
+and the *calling* half has never left the loopback.
+
+`v32call.py` is that missing piece: the same frame-by-frame body as
+`v32answer.py`, with the SIP leg placed instead of received and `OriginateStartup`
+in place of `AnswerStartup`. It places the call fine, and then this happens:
+
+```
+  [ 2.623] WAITANS 600/3000 Hz pair detected - transmitting state A
+  [ 2.964] AA      first phase reversal at 10010T - timer on, AA->CC in 64T
+  [ 3.219] CC      second phase reversal at 10620T - timer stopped, NT = 624T
+  [ 3.219] CC      -> WAITS (silent, waiting for an incoming S)
+```
+
+and then nothing for the remaining ninety seconds. The modem's own log says
+`RING` and, sixty seconds later, `NO CARRIER`.
+
+The recorded audio says the modem was never the problem. Reading the capture a
+second at a time:
+
+| t | what is on the line |
+|---|---|
+| 0.5 s | 425 Hz at −10.4 dBFS — ringback |
+| 1.5 to 3.5 s | **2100 Hz** — the answer tone; the modem picked up at about 1 s |
+| 5 s onward | broadband and changing — the modem transmitting its half of 5.4 |
+
+So the far end answered and worked through its start-up for the whole call, while
+we sat in `WAITS`. Our caller announced "600/3000 Hz pair detected" at 2.62 s
+against a line carrying 2100 Hz, and then took **the answer tone's own phase
+reversals** -- 0.34 s and 0.25 s apart -- for the answerer's AC-to-CA transitions,
+started and stopped its NT timer on them, and ceased transmitting. By the time the
+answerer actually sent its conditioning signal we were waiting for something that
+had already been mis-identified.
+
+None of that can happen soft to soft, because there our answerer's tone is what
+our caller was written against. It needs a real one, and the FRITZ!Box makes it
+realer still: `sip-audio-path.md` records that the box regenerates anything near
+2100 Hz as its own unmodulated sine, so ANSam arrives as plain ANS with the
+amplitude modulation stripped and only the reversals left.
+
+**So the role prediction is still untested**, and the reason is a defect on our
+side that this experiment found rather than the one it went looking for. The fix
+is bounded and the evidence is on disk: `WAITANS` has to wait out the answer tone
+rather than trigger inside it, and the reversal detectors must not arm until the
+2100 Hz has actually stopped. Until that is done, "why does 14 400 not work" keeps
+its answer of one experiment short.
 
 Two caveats on the table above, because it is three sessions of data assembled
 after the fact. The earlier dialling figures for the Cirrus, 1.90 and 3.11, sit
