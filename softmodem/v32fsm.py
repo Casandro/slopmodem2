@@ -115,6 +115,10 @@ RETRAIN_MAX = 4                     # consecutive attempts before giving up
 # then corrects nothing and disturbs a loop that was merely struggling. Kept
 # settable so the two cases can be told apart by experiment rather than argument.
 REGAIN_EVERY = 50                        # 5.4.2, after the amplitude drop
+# A data phase this long means the rate is viable, so a later retrain is a
+# transient rather than evidence against it. 24000 symbols is 10 s at 2400
+# baud; measured, a rate that cannot hold collapses in three to four.
+RATE_PROVEN_SYM = 24000
 TONE_HOLD = 64                      # 5.4.2, 1800 Hz for 64 symbol periods
 
 # --- states ----------------------------------------------------------------
@@ -1128,6 +1132,17 @@ class AnswerStartup(_Base):
             # them is offering the coding
             self.can_trellis = True
         self.trn_len = int(trn)
+        # 6.2: "It is recommended that R3 take also account of the likely
+        # performance of the answer modem receiver with the particular GSTN
+        # connection established." _start_r3 picked max(offered & ours) and
+        # looked at nothing, so with every rate enabled it chose the top one and,
+        # if that rate would not hold, chose it again after every retrain --
+        # measured, 14400 selected five times in one call, five collapses, no
+        # data. A real modem falls back. This counts collapses and steps the
+        # choice down one offered rate each time, which is 6.2's recommendation
+        # made from evidence rather than from a prediction: the link has already
+        # told us the rate is too high.
+        self.rate_demotions = 0
         import ansam
         self.ans = list(ansam.ans_samples(ans_s, level_dbfs=level_dbfs))
         self.ans_pos = 0
@@ -1175,11 +1190,17 @@ class AnswerStartup(_Base):
     def _start_r3(self):
         # 5.4.2: R3 selects within what R2 offered
         offered = set(self.r2["rates"]) & set(self.rates)
-        pick = max(offered) if offered else None
+        ranked = sorted(offered, reverse=True)
+        pick = (ranked[min(self.rate_demotions, len(ranked) - 1)]
+                if ranked else None)
         self.r3_rate = pick
         if self.state != R3TX:
-            self._ev("R3: selecting %s bit/s from %s"
-                     % (pick, sorted(self.r2["rates"])))
+            self._ev("R3: selecting %s bit/s from %s%s"
+                     % (pick, sorted(self.r2["rates"]),
+                        "" if not self.rate_demotions else
+                        " (down %d after %d collapse%s)"
+                        % (self.rate_demotions, self.rate_demotions,
+                           "" if self.rate_demotions == 1 else "s")))
             # No rescan here, unlike the caller's _start_r2. 5.4.1's timing
             # diagram has the caller sending one S S-bar TRN R2, and then E and
             # B1 straight on the end of it -- no silence, no retrain, no gap. The
@@ -1369,6 +1390,21 @@ class AnswerStartup(_Base):
         """5.5.2: transmit AC for an even number of symbol intervals not less
         than 128, then pick up 5.4.2 at its third paragraph -- which is what our
         AC1 state already is."""
+        # Whatever rate we chose did not survive, so the next R3 may ask for
+        # less -- but not on the first retrain. A single one is a transient, and
+        # 5.5 exists precisely so a link can recover at the rate it had; the
+        # soft-to-soft tests induce exactly that and expect 9600 back. It is the
+        # *repeated* collapse that says the rate is wrong, so the demotion
+        # starts from the second. A data phase that actually held resets it,
+        # because a rate that ran for ten seconds has proved itself and should
+        # not be given away to one later glitch.
+        held = 0
+        if self.data_sym is not None:
+            held = self.tx.nsym - self.data_sym
+        if held >= RATE_PROVEN_SYM:
+            self.rate_demotions = 0
+        elif self.retrains >= 1:
+            self.rate_demotions += 1
         self._retrain_begin(why)
         self.rev = Reversal(1800.0)
         self.ac_sent = 0.0

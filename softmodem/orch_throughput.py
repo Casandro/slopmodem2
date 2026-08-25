@@ -35,6 +35,7 @@ import serial, sys, time
 port, number, secs, dialcmd = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
 auto = sys.argv[5] if len(sys.argv) > 5 else "1"
 factory = (sys.argv[6] != "0") if len(sys.argv) > 6 else True
+top = sys.argv[7] if len(sys.argv) > 7 else "14400"
 PAT = bytes(range(33, 127))          # printable ASCII, 94 octets
 s = serial.Serial(port, 115200, timeout=0.2, rtscts=False)
 
@@ -59,8 +60,8 @@ for c in ("AT&K3", "ATW1", "AT&Q5", "ATS48=7", "ATS46=136",
           "AT\\N3", "AT%C0", 'AT"H0', "AT\\A0"):
     cmd(c, 0.6)
 # every V.32bis rate, negotiated rather than pinned; see the module docstring
-cmd("AT+MS=V32B,%s,4800,14400" % auto)
-cmd("AT+MS=V32B,%s,4800,14400,4800,14400" % auto)
+cmd("AT+MS=V32B,%s,4800,%s" % (auto, top))
+cmd("AT+MS=V32B,%s,4800,%s,4800,%s" % (auto, top, top))
 rd = cmd("AT+MS?")
 print("MS-READBACK %s" % rd.replace("\r", " ").strip(), flush=True)
 
@@ -125,6 +126,11 @@ def main():
                          "leaves well over the minute of data phase asked for")
     ap.add_argument("--level", type=float, default=-18.0)
     ap.add_argument("--feed", type=int, default=64)
+    ap.add_argument("--max", default="14400",
+                    help="the modem's own +MS ceiling. With automode 0 the "
+                         "Cirrus advertises this rate and nothing else, so it "
+                         "is the only way to pin that modem to a rate, and an "
+                         "R1 from us that omits it draws a cleardown")
     ap.add_argument("--no-factory", action="store_true",
                     help="skip AT&F, leaving the stored profile in place")
     ap.add_argument("--rates", default="4800,7200,9600,12000,14400",
@@ -162,9 +168,9 @@ def main():
     time.sleep(3.0)
 
     far = subprocess.run(
-        ["ssh", PI, "python3 - %s %s %.1f %s %s %s"
+        ["ssh", PI, "python3 - %s %s %.1f %s %s %s %s"
          % (a.port, a.number, a.seconds + 6, a.dial, a.automode,
-            "0" if a.no_factory else "1")],
+            "0" if a.no_factory else "1", a.max)],
         input=DIAL.encode(), capture_output=True)
     ftxt = far.stdout.decode("ascii", "replace")
     for ln in ftxt.splitlines():
