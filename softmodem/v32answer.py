@@ -58,6 +58,12 @@ def main():
     ap.add_argument("--send", default="",
                     help="characters to send once the data phase opens, "
                          "repeated (7.1.2 via the V.14 converter)")
+    ap.add_argument("--send-ascii", action="store_true",
+                    help="send printable ASCII 33..126 repeating instead of "
+                         "--send. Generated here rather than passed as text "
+                         "because the set contains quotes, backslashes and "
+                         "semicolons, and the orchestrator hands --send to a "
+                         "remote shell")
     ap.add_argument("--ec", action="store_true",
                     help="V.42: run the 7.2.1 detection phase when the data "
                          "phase opens, then LAPM, instead of V.14")
@@ -159,7 +165,8 @@ def main():
     seen = 0
     t0 = time.time()
     got = bytearray()
-    pat = a.send.encode("ascii", "replace") if a.send else b""
+    pat = (bytes(range(33, 127)) if a.send_ascii
+           else (a.send.encode("ascii", "replace") if a.send else b""))
     sent = [0]
     first = [0.0]
     last = [0.0]
