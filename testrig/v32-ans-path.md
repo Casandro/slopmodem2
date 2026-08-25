@@ -2892,13 +2892,30 @@ talk to each other and we only relay -- so what it measures is one transmitter
 through one fixed receiver.
 
 The first attempt went straight into the trap this file had already documented
-twice. `eye.py` reports the last 4000 data symbols, and the six 14 400 runs came
+twice. `eye.py` reported the last 4000 data symbols, and the six 14 400 runs came
 out at 8.41, 8.96, 9.13, 9.48, 9.19 and 9.10% -- tight, unimodal, no sign of the
 two states the hypothesis predicted. Then the control: the same measurement at
 12 000 read **11.54, 11.96 and 12.59%**, which is worse than 14 400 on the same
 path, and impossible. Lower-order constellations do not decode worse through the
 same channel. The raw medians say the same thing -- 0.748 to 0.816 at 12 000
 against 0.539 to 0.607 at 14 400 -- so it is not a normalisation artefact.
+
+`eye.py` has since been fixed to window the capture from signal E and report the
+quietest window, the median and the tail, so a decaying link is visible rather
+than silently folded into one figure. Re-read that way, the nine captures say
+this:
+
+| Cirrus transmit | best window | median | tail |
+|---|---|---|---|
+| 12 000, three runs | **1.23, 1.31, 1.31%** | 12.8 to 13.1% | 10.7 to 13.2% |
+| 14 400, five runs | **6.03, 6.42, 8.45, 8.62, 8.97%** | 9.0 to 9.4% | 9.0 to 9.4% |
+
+At 12 000 the best window is 1.3% to within four hundredths across three runs, and
+best-vs-median differs by a factor of ten -- a signal that is clean and a link
+that decays. At 14 400 best, median and tail are all the same number, because
+there is no decay to find: it is that bad from the start and stays there. Even the
+quietest 14 400 window ever recorded, 6.03%, sits against an 11.0% margin with
+1.8x of headroom, where 12 000's 1.31% has 11.8x.
 
 Windowing the captures from signal E instead of taking the tail explains it. At
 12 000 the Cirrus's transmit reads **2.0% in the first five seconds and then 12.4
@@ -2911,32 +2928,50 @@ data, which is what the 12.9% tail actually is.
 
 With both captures read at the same point in the call, the comparison is clean:
 
-| Cirrus transmit, first window after signal E | residual | margin |
+| Cirrus transmit | quietest window | margin | headroom |
+|---|---|---|---|
+| 12 000 | **1.23 to 1.31%** | 15.4% | 11.8x |
+| 14 400 | **6.03 to 8.97%** | 11.0% | 1.2x to 1.8x |
+
+**And then the same tool, once fixed, took the answer away again.** Re-reading
+the six original 2×2 captures with a chosen window rather than a tail says the
+Cirrus's 14 400 transmit was **1.33, 1.25 and 1.33%** in runs 6, 9 and 10 — clean,
+and nowhere near nine per cent. What is different about those three runs is that
+the Cirrus was the *answering* modem in them, and in all six of today's it was the
+one that dialled.
+
+Sorting every 14 400 bridge capture by role rather than by modem:
+
+| | dialling (leg A) | answering (leg B) |
 |---|---|---|
-| 12 000 | **2.0%** | 15.4% |
-| 14 400 | **9.7%**, and 8.9 to 9.9% for the whole call | 11.0% |
+| **Cirrus** | 1.90, 3.11, 6.42 (earlier) · 6.03, 6.42, 8.45, 8.62, 8.97 (today) | 1.25, 1.33, 1.33 (earlier) · 2.52 (today) |
+| **Conexant** | 8.05, 8.57, 8.76 (earlier) · 7.96, 9.15 (today) | no signal E at all |
 
-**That is the answer.** The Cirrus's 14 400 signal arrives at about 9% of
-amplitude in residue, from the first window, with our transmitter nowhere in the
-path and our receiver reading 2.0% on the same instrument in the same session at
-one rate down. It is not our receiver, and it is not the channel, because the
-channel carries 12 000 from the same modem minutes earlier at a fifth of the
-noise. It is what the far end puts on the line at 14 400, and 9% against an 11.0%
-margin is why nothing holds.
+The dialling modem transmits worse than the answering one, and it is the same
+modem either way. The Cirrus swapped into the answering role today read **2.52%**
+where it had read 6.03 to 8.97 dialling an hour before; the Conexant is poor in
+every role it can be measured in. So the nine per cent belongs to the *role*, at
+least as much as to either transmitter, and the claim in the commit before this
+one — that it is the Cirrus's transmitter — was confounded. It was measured
+entirely in one role because live calls only ever run in one role.
 
-**And the bimodality was never there.** Six runs in one sitting span 8.41 to
-9.48%, which is ±0.5 points about a mean of 9.05 and not two states. The earlier
-1.9 / 9.2 / 3.0 / 8.8 / 1.3 / 1.3 spread that suggested it was measured with the
-tail window, and today's captures show the tail differing from the settled window
-by a factor of six in a link that decays. Those six numbers are most likely six
-different amounts of decay, not two modes of a transmitter.
+**Which is the point worth taking away.** A hardware modem dials `**620` and we
+answer, in every live test in this file. The modem is therefore always the caller,
+which is the role that transmits at six to nine per cent, against a margin of
+11.0%. The same modem answering transmits at one to two and a half.
 
-Which costs the swapped 2×2 above its absolute figures. Its *comparative*
-conclusion survives -- both legs were measured the same way at the same instant,
-and that is what attributes a fault to a modem rather than to a call -- but the
-individual medians in it are tail readings and should not be quoted as the
-quality of anyone's transmitter. `eye.py` now says so in its docstring, and
-`eyewin.py` is the tool for an absolute number.
+That is a prediction, and the rig can test it: originate from our side instead, so
+the modem answers, and 14 400 should hold. `orch_orig.py` exists. It has not been
+run at 14 400, and until it has, "why does 14 400 not work" has an answer that is
+one experiment short of established.
+
+Two caveats on the table above, because it is three sessions of data assembled
+after the fact. The earlier dialling figures for the Cirrus, 1.90 and 3.11, sit
+well below today's five, so role does not explain everything and the two sessions
+differ as well. And the six 14 400 runs today are one sitting with one leg
+assignment, which is exactly the design fault this file criticised in the original
+single-run attribution. Interleaved runs alternating the role, in one sitting,
+would settle it.
 
 For the third time in this file, and it is worth stating as plainly as possible
 because it keeps costing whole experiments: **where a measurement window falls is
