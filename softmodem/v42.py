@@ -1046,10 +1046,24 @@ class Session:
 
     def step(self, inbits, n, now=0.0):
         """Received bits in, exactly n bits to transmit out."""
-        if self.t0 is None:
+        # 9.1.1: T400 "governs the amount of time that a control function ...
+        # waits for the ADP or the ODP" -- and waiting cannot begin before the
+        # receiver delivers anything to wait on. v32fsm gates the descrambled
+        # stream on the eye being open, deliberately, so the detection phase is
+        # not decided by junk; but the timer used to start at the data phase
+        # regardless, so whatever the gate held back came out of the 750 ms.
+        #
+        # Measured on recorded runs: one whose ODP was confirmable 520 ms into
+        # the delivered bit stream reported "no far end" at 750 ms of frame
+        # time, having spent at least 230 ms of the window deaf. Replaying the
+        # same recording against the same detector on the bit clock decides
+        # lapm. Same bits, same code, opposite answers, and the difference was
+        # which clock the timeout ran on.
+        if self.t0 is None and inbits:
             self.t0 = now
+        elapsed = 0.0 if self.t0 is None else now - self.t0
         if self.phase is self.DETECT:
-            out = self.det.feed(inbits, now - self.t0)
+            out = self.det.feed(inbits, elapsed)
             if self.det.result is Detection.LAPM:
                 self.phase = self.LAPM_UP
                 # 7.2.1.1: the originator drives establishment

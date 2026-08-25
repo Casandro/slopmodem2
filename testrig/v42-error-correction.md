@@ -397,6 +397,60 @@ frame, V.14 spending ten bits on eight — and bounded as well:
 The 94% rather than 100% is one 5.5 retrain at 14 s diluting the ratio; the
 pattern check runs on the longest clean run and is exact.
 
+### T400 was counting time the detector spent deaf
+
+V.42 came up in **two calls out of seven** at 12 000, which is a poor showing for
+the thing the headline throughput figure depends on, and the failures split two
+ways: four reported "detection found no far end" and one brought LAPM up and then
+carried nothing.
+
+The far end was not the problem, and the recording proves it rather than
+suggesting it. `v32answer.py` already saves the descrambled data bits of the whole
+data phase, so what the modem sent during the detection window can be read back
+afterwards. Scanning five runs for every character 7.2.1 defines:
+
+| run | live decision | ODP actually in the recording? |
+|---|---|---|
+| 1 | lapm at 0.180 s | not until 1.140 s -- decided on flags, then LAPM failed |
+| 2 | lapm at 0.620 s | yes, at 0.420 s -- consistent |
+| 3 | none at 0.760 s | never -- this modem really did not offer V.42 |
+| **5** | **none, timed out** | **yes, at 0.520 s** |
+
+Run 5 is the one that matters. Replaying its own bits through its own detector
+decides **lapm**; live, the same code on the same stream reported no far end.
+Same bits, same detector, opposite answers, and the only difference is which
+clock the timeout ran on.
+
+`_Rx` gates the descrambled stream on the eye being open -- deliberately, and the
+comment there says why: "the 7.2.1 detection phase is a pattern match with a
+750 ms timer and garbage bits can decide it the wrong way". What it did not do was
+stop the timer while the gate was shut. T400 ran from the data phase regardless,
+so every millisecond the receiver spent converging came out of the 750, and run 5
+spent at least 230 ms of its window unable to hear anything at all.
+
+9.1.1 settles which is right: T400 "governs the amount of time that a control
+function ... **waits for** the ADP or the ODP". A control function that is being
+handed nothing is not waiting for the ODP; it is waiting for its own receiver. So
+the clock now starts when the first bits are actually delivered, and the gate
+costs nothing.
+
+| | LAPM connected |
+|---|---|
+| before, matched batch | 1 of 4 valid runs |
+| after | **3 of 3 valid runs**, 1353 to 1354 byte/s |
+
+Small numbers, and worth saying so -- the case does not rest on them but on run 5,
+where the miss is visible in the recording. `test_v42.py` asserts the property
+directly: an ODP arriving after 0.3, 0.6 or 1.5 s of gated silence is still
+detected, while mark for longer than T400 of *delivered* bits still falls back, so
+the timer has not simply been disabled. Checked against the old behaviour, which
+fails the 1.5 s case.
+
+One operational note from the same batch: two runs in five had every AT command
+return `ERROR` and never placed a call at all. Back-to-back dialling leaves the
+modem's port unresponsive for a while, which is a property of the rig rather than
+of anything here, and it is why the counts above are out of four and three.
+
 ### The Conexant retrains at 14.2 seconds, and why
 
 Six runs triggered a 5.5 retrain 5.3 to 5.9 s after the data phase opened — at

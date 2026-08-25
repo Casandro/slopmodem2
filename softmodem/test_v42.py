@@ -727,6 +727,53 @@ if __name__ == "__main__":
           bytes(got) == txt, "%r" % bytes(got)[:52])
 
     print()
+    print("9.1.1 T400 counts time spent waiting, not time spent deaf")
+    # The receiver gates the descrambled stream until the eye is open, on
+    # purpose, so the detection phase is not decided by junk. T400 used to run
+    # from the data phase regardless, so whatever the gate held back came out of
+    # the 750 ms -- and a far end whose ODP was plainly there got reported as
+    # "no far end". Measured on a recording: confirmable at 520 ms of delivered
+    # bits, timed out at 750 ms of frame time.
+    def detect_with_gate(gate_s, odp_reps=12, rate=12000.0, originator=False):
+        """Feed nothing for gate_s, then a real ODP, and see what is decided."""
+        e = v42.Session(originator=originator)
+        step = int(rate * 0.02)
+        now = 0.0
+        for _ in range(int(gate_s / 0.02)):        # gated: no bits delivered
+            e.step([], step, now)
+            now += 0.02
+        stream = []
+        for _ in range(odp_reps):
+            stream.extend(v42.odp(8))
+        # 7.2.1.3: once the ODP is seen the answerer owes ten ADPs before it is
+        # done, so keep the link running rather than stopping at the last ODP
+        # bit -- the decision lands several calls later.
+        for i in range(0, len(stream) + 40 * step, step):
+            chunk = stream[i:i + step] if i < len(stream) else [1] * step
+            e.step(chunk, step, now)
+            now += 0.02
+            if e.det.result is not v42.Detection.UNDECIDED:
+                break
+        return e.det.result
+
+    for gate in (0.0, 0.3, 0.6, 1.5):
+        r = detect_with_gate(gate)
+        check("  ODP after %.1f s of gated silence is still detected" % gate,
+              r is v42.Detection.LAPM, "decided %s" % r)
+    # and the timer must still work once bits really are flowing: mark only,
+    # for well over T400, has to end in a fallback rather than hang for ever.
+    e = v42.Session(originator=False)
+    now, step = 0.0, 240
+    for _ in range(100):
+        e.step([1] * step, step, now)
+        now += 0.02
+        if e.det.result is not v42.Detection.UNDECIDED:
+            break
+    check("  but mark for %.2f s of *delivered* bits still falls back" % now,
+          e.det.result is v42.Detection.NONE and now >= v42.T400,
+          "decided %s at %.2f s" % (e.det.result, now))
+
+    print()
     print("8.4.1 the window counts frames in flight, not frames queued")
     # A window consumed by our own queued frames would have to cover the drain
     # as well as the flight, giving 1/(1/L + RTT/W) -- about 8440 bit/s at
