@@ -1426,6 +1426,7 @@ class OriginateStartup(_Base):
         self.rev3000 = Reversal(3000.0)
         self.ans_hold = ans_hold
         self.ans_run = 0.0
+        self.s_hold = 0             # floor on the S period, in symbols
         self.nt = None
         self.t0_sym = None
         self.r1 = None
@@ -1446,8 +1447,16 @@ class OriginateStartup(_Base):
             self._ev("R1 received: rates %s%s"
                      % (p["rates"], " (V.32bis)" if self.bis else
                         (" trellis %s" % p.get("trellis"))))
-            self._goto(STX_NT, "(S for NT = %.0fT)" % (self.nt or 0))
-            self._send_states(v32.s_states(max(1, int(self.nt or 256))),
+            # 6.1 says S "for a period NT already estimated by the
+            # counter/timer", and NT is short on this rig -- 384T, 160 ms. 6.2
+            # has the answerer detect our S, cease transmitting, wait its own MT
+            # and then require that S "persists ... or reappears". If its MT
+            # outlasts our S, it goes looking for something that has already
+            # stopped. s_hold sets a floor on the period so that can be tested
+            # rather than argued about; 0 keeps the Recommendation's NT.
+            n = max(1, int(self.nt or 256), int(self.s_hold))
+            self._goto(STX_NT, "(S for %dT; NT = %.0fT)" % (n, self.nt or 0))
+            self._send_states(v32.s_states(n),
                               on_done=lambda m: m._start_rc())
         elif self.state == R2TX and not p["end"]:
             self.r3 = p

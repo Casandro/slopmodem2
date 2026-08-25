@@ -3096,10 +3096,44 @@ the whole of NT and MT is estimated from the interval our reversal defines. A
 caller that runs that exchange three times faster than any real one hands the
 answerer a timing reference from a schedule it is not on.
 
-That is the next thing to try, and it is cheap: hold AA longer before reversing,
-and see whether the answerer ceases transmitting when our S arrives. The whole
-chain -- cease, MT, train, R2, E, data -- is downstream of that one event, and
-nothing further should be attempted until the far end can be seen to go quiet.
+Holding AA longer was the first thing tried, and it is 6.1's requirement rather
+than a guess -- `ans_hold` and `ans_run` had been in the caller since it was
+written, assigned and never read, so the only exit from `WAITANS` was Note 1's
+"proceed on the 600/3000 pair", which is legal but starts the tone late. Wired up,
+our tone runs 1.54 s against a real caller's 1.5 to 2, and the handshake reaches
+R3 nearly two seconds earlier. It does not fix the stall.
+
+**What it did fix is the diagnosis.** The far end plainly hears us during the tone
+phase: 6.2 switches AC to CA only after detecting the caller's 1800 Hz, and it did
+that; it reverts CA to AC only after detecting the caller's *reversal*, and it did
+that too. Both of our early signals arrive. What it never detects is our **S**,
+and everything else follows from that one failure -- no cease, no MT, no training,
+no R2 read, no E looked for, R3 for fifteen thousand frames.
+
+### The S-duration theory, and why it was backwards
+
+NT comes out 384 to 624T on this rig, so our S runs 160 to 260 ms before the
+conditioning signal starts, and 6.2 has the answerer detect S, cease, wait its own
+MT and then require that S "persists ... or reappears". If MT outlasts our S it
+looks for something that has already stopped, which fits every observation. So a
+floor on the S period went in -- `s_hold`, defaulting to 0, which leaves the
+Recommendation's NT untouched -- and it was swept live:
+
+| S period | outcome |
+|---|---|
+| 624T (NT, unchanged) | stalls in B1TX, 109 off |
+| 1200T | stalls in B1TX, 109 off |
+| 2400T | **worse** -- never reaches R3 at all |
+
+Refuted, and then measurement showed the theory had the sign wrong. Tagging both
+transmissions with our own `is_S`, a real caller's S lasts about **100 ms** and
+ours already lasted **600 ms**. We were sending six times more S than the modem
+that works, and more of it makes things worse rather than better.
+
+So the fault is not how long our S is. It is something about the S itself, or
+where it falls relative to the answerer's own schedule. `s_hold` is kept because
+it costs nothing at its default and the sweep is worth being able to repeat, and
+because the next person will otherwise have the same idea.
 
 For the third time in this file, and it is worth stating as plainly as possible
 because it keeps costing whole experiments: **where a measurement window falls is

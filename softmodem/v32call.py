@@ -37,6 +37,9 @@ def main():
     ap.add_argument("--ec", action="store_true")
     ap.add_argument("--feed", type=int, default=4)
     ap.add_argument("--echo", action="store_true")
+    ap.add_argument("--s-hold", type=int, default=0,
+                    help="floor on the S period after R1, in symbols; 0 uses "
+                         "6.1's NT. 2400 is one second")
     ap.add_argument("--echo-budget", type=int, default=None)
     ap.add_argument("--out", default="ref/v32call_rx.raw")
     ap.add_argument("--tx-out", default="ref/v32call_tx.raw")
@@ -75,6 +78,7 @@ def main():
                                 ans_hold=a.ans_hold,
                                 **({} if a.echo_budget is None
                                    else {"echo_budget": a.echo_budget}))
+    m.s_hold = a.s_hold
     seen = 0
     t0 = time.time()
     got = bytearray()
