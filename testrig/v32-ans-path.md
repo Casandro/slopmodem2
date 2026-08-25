@@ -3059,12 +3059,47 @@ same place, at the same rate, with the same 109 off -- so it is ours, not a Cirr
 quirk. The same call at 12 000 and at 14 400 stall identically too, so it is not
 about the rate either.
 
-What is left is something about how our E arrives rather than what it contains:
-level, the 7 dB step from the four-point rate signal into the data constellation
-that follows it one symbol later, or timing against a far end that may not yet be
-listening for a sequence sent exactly once. Recordings of both directions of a
-failing call are on disk, and the offline replay reproduces the stall exactly, so
-the next attempt needs no rig until it is ready to confirm.
+**It is not the level either.** Measured across the E boundary on our own
+recorded transmission, we go out at −23.2 dBFS before E, −23.5 at E and −23.0
+after it: no step at all into the data constellation, so there is nothing there to
+disturb a far end's gain.
+
+### The far end is not listening to us at all, and that is the real fault
+
+The test that settles it: pin the modem so R1 offers 7200, 12000 and 14400, and
+have our caller offer an R2 of **[7200]** alone. §6.2 requires that "the data rate
+selected by R3 shall be within those indicated by R2". It answered **R3
+[14400]** -- its own maximum, a rate we had just excluded.
+
+So the far end never reads our R2. The level trace says why, and says it more
+plainly than any parse: **it never ceases transmitting.** §6.2 has the answerer
+cease on detecting the caller's S sequence, and across a whole call it sits at
+−24 to −25 dBFS without a break, while we send S from 7.3 s onwards. It is
+running its own schedule -- ANS, AC/CA, conditioning signal, R1, second
+conditioning signal, R3 -- and hearing none of us. Everything downstream follows
+from that: no R2 read, so no E looked for, so R3 for fifteen thousand frames.
+
+**What a real caller sounds like**, from the recordings of the modem in that role,
+against ours, tagged by our own detectors a half-second at a time:
+
+```
+modem as caller   1.5:AA 2.0:AA 2.5:AA 3.0:AA 3.5:-- 4.0:-- 4.5:-- 5.0:-- 5.5:..
+us as caller      3.5:-- 4.0:AA 4.5:-- 5.0:-- 5.5:-- 6.0:-- 6.5:-- 7.0:-- 7.5:S
+```
+
+The modem holds its 1800 Hz for **1.5 to 2 seconds** before anything else happens.
+Ours lasts about **0.35 s** before we put the reversal in it and another 0.26 s of
+C after that -- 0.6 s in total against two seconds. §6.2 wants alternate A and C
+transmitted for at least 128 symbol intervals *and* the incoming 1800 Hz detected
+for 64 symbol periods before the answerer will even arm its reversal detector, and
+the whole of NT and MT is estimated from the interval our reversal defines. A
+caller that runs that exchange three times faster than any real one hands the
+answerer a timing reference from a schedule it is not on.
+
+That is the next thing to try, and it is cheap: hold AA longer before reversing,
+and see whether the answerer ceases transmitting when our S arrives. The whole
+chain -- cease, MT, train, R2, E, data -- is downstream of that one event, and
+nothing further should be attempted until the far end can be seen to go quiet.
 
 For the third time in this file, and it is worth stating as plainly as possible
 because it keeps costing whole experiments: **where a measurement window falls is
