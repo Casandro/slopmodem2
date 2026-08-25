@@ -3023,7 +3023,48 @@ so the alignment E arrives on is the one from R3 and is not thrown away.
 
 So the role prediction is still untested, and the reason has moved: not the tool,
 not the answer tone, not `lvl_peak`, but a caller that sends its E and never sees
-the reply. That is the next thing to find, and there is a recording of it.
+the reply.
+
+### What is known about that, so the next person does not re-derive it
+
+**The far end waits for our E and never gets past it.** Replaying the recording
+and counting runs of identical parses, the answerer sends R3 `[12000]` **15 749
+times** -- every frame from 8.50 s to the end of a sixty-second call. §6.2 has it
+transmit R3 until it detects the incoming E, so that is a modem doing exactly what
+it should while we fail to be heard.
+
+**Our E is correct, and it is on the wire.** Three separate checks:
+
+- the bits are right. `1111100110110001` for 12 000 with V.32bis, which is
+  B0-B3 = 1111, B4 = B8 = 1, B10 for 12 000, B11 and B15 sync, B13 = B14 = 0 --
+  Table 6/V.32 bis exactly -- and it parses back to `{end: True, rates: [12000]}`.
+- it is byte-identical to the E our *answer* side sends, which the same modems do
+  detect, since answer-direction calls reach the data phase every time.
+- it is decodable off our own transmitted audio. Feeding `v32if_tx.raw` back
+  through our own receiver gives `[8.54s] end=True rates=[12000]` sitting
+  immediately after the R2 stream, on the alignment R2 established.
+
+**It is not the obvious mechanisms.** `_send_e` already finishes the current
+16-bit sequence before appending E, so the splice cannot shift it -- the comment
+there records an earlier bug where it did, and E read `[2400, 4800]` instead of
+`[9600]`. `tx.set()` replaces only the queue, so the scrambler and the
+differential encoder run on unbroken through the splice. `RateScanner` requires
+two consecutive identical sequences before it accepts a rate signal, so R3 was not
+declared on a single lucky window. And the caller's `_rescan()` is in `_start_r2`,
+before R3, so the alignment E goes out on is the one from R2 and is never thrown
+away.
+
+**And it is not one modem.** The same call to the Conexant on `**2` stalls in the
+same place, at the same rate, with the same 109 off -- so it is ours, not a Cirrus
+quirk. The same call at 12 000 and at 14 400 stall identically too, so it is not
+about the rate either.
+
+What is left is something about how our E arrives rather than what it contains:
+level, the 7 dB step from the four-point rate signal into the data constellation
+that follows it one symbol later, or timing against a far end that may not yet be
+listening for a sequence sent exactly once. Recordings of both directions of a
+failing call are on disk, and the offline replay reproduces the stall exactly, so
+the next attempt needs no rig until it is ready to confirm.
 
 For the third time in this file, and it is worth stating as plainly as possible
 because it keeps costing whole experiments: **where a measurement window falls is
