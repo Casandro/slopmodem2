@@ -2758,6 +2758,46 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### 14 400, narrowed further: it is our carrier the far end refuses
+
+Four things established in one sitting, each closing off a candidate.
+
+**The far end really is asking, and our detector is right about it.** "The far end
+is holding a carrier state" is our own reading of the received band energies, so
+it was worth checking rather than trusting. At the moment the first retrain is
+declared the received signal measures **e1800 = 1.000** -- a pure 1800 Hz tone,
+which is exactly 5.5.1's request -- and the energy collapses to silence half a
+second later. It genuinely asked.
+
+**It is not our data.** The obvious reading of "it gives up 3.6 s into the data
+phase" is that something about our transmitted *data* offends it, since for the
+first 0.8 s we send nothing but idle. Ran the same call with `--no-pattern`, so
+the whole data phase carries scrambled ones and nothing else: it asks for a
+retrain anyway. Whatever it objects to is in the carrier, not the payload.
+
+**It is not the transport.** RTP accounting is identical in the runs that fail and
+the runs that work -- `out = in + 2` for the two priming frames, zero watchdog
+fills, in every case. No slipped or duplicated 20 ms frame, which was the one
+mechanism that would have explained a dense constellation failing where a sparse
+one survives.
+
+**And our transmitter is sound at the source.** Decoding our own recorded
+transmission on our own clock, with the sampling phase and carrier rotation
+scanned rather than assumed, gives a median distance of **2.36% of the rms
+radius** to the 128-point lattice -- against A-law's own floor of 1.3% and a
+margin of 11.0%. (Read without scanning it comes out at 7.0%, which is the
+transmit filter's group delay and an arbitrary rotation being scored as
+distortion. That is the third time in this file a measurement has been taken with
+the instrument left unaligned, and the second time today.)
+
+So: our signal leaves at 2.4% into an 11% margin, the transport is clean, the far
+end can decode it in bursts -- 35 304 consecutive characters once -- and after
+about three and a half seconds it refuses the carrier. What is left is the part
+never measured cleanly, which is what our 14 400 looks like *as delivered*. The
+voice-mode capture cannot answer it: its own floor is 7.1% on a pure tone, which
+is most of the margin being argued about. Finding an instrument better than that
+is the next real step, and everything cheaper has now been tried.
+
 ### Why two runs of the same rate differ by a factor of fifty
 
 The analog path does not change between calls, so a 12 000 link that carries
