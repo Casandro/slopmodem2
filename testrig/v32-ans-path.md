@@ -2758,6 +2758,70 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### The blind-equaliser theory: built, measured, discarded
+
+The sharpest-looking explanation yet, and it was wrong. Sorting every run by
+whether the receiver ever left CMA:
+
+| | reached decision-directed | data-phase residual |
+|---|---|---|
+| 12 000, three runs | **yes** | **1.40%** |
+| 12 000, CMA forced on | no | **12.65%** |
+| 14 400, three runs | **no** | **8.9 to 9.3%** |
+
+That reads as an answer. CMA leaves 9 to 13% on this path at any rate, DD turns it
+into 1.4%, and at 14 400 the handover never happens -- `acq_med` measures 0.344
+against a threshold of 0.30, missing by fifteen per cent -- so the equaliser stays
+blind and 9% goes into an 11.0% margin. Even `r14400b`, the one 14 400 call that
+delivered 35 304 characters, ran with `dd False`.
+
+The standard fix for a dense constellation is to bootstrap the decision-directed
+loop on a sparse subset: decisions against a set with twice the spacing are right
+at error levels that make full decisions noise, and an equaliser adapted on
+right-but-coarse decisions pulls the eye in until the full set becomes usable.
+Built it -- a greedy subset at 2x d_min, 32 points of the 128, with the handover
+threshold expressed as a fraction of the *coarse* decision radius rather than as
+an absolute distance, since 0.597 is 0.84 of the full radius and 0.42 of the
+coarse one and no absolute number can tell those apart.
+
+It works, in the sense that it does what it says. 14 400 now accepts the handover
+at 0.597 against a coarse-relative threshold of 0.707, enters the bootstrap, and
+adapts on coarse decisions for the full 2400 symbols. **And the residual does not
+move: 9.20% before, 9.18% after.**
+
+Which is the answer, arrived at from the other side. Coarse decisions at a 9%
+residual are *right* -- that is the whole point of the reduced set -- so the
+equaliser is adapting on good decisions and still cannot improve the eye. There is
+nothing structured left for it to remove. The error's lag-1 autocorrelation is
+−0.037: it is white, and no equaliser removes white noise however it is steered.
+
+**It also broke the rate that works**, which is how it earned its discard rather
+than a flag. The looser handover applies at 12 000 as well, where CMA's median is
+about 0.8 and the coarse-relative threshold is 1.0, so a link that used to hand
+over cleanly a little later now bootstraps early and dies:
+
+| 12 000, same modem, minutes apart | data phase |
+|---|---|
+| without the change | **82.9 s, 90% / 89%, V.42 up** |
+| with it | **0.0 s** |
+
+Reverted. The patch is kept out of tree; the reasoning is here because the next
+person will have the same idea, and because the negative is informative.
+
+**And it corrects what this file said an hour earlier.** "The receiver never
+leaves CMA at 128 points" is a *symptom*, not the cause: `dd` is False because the
+eye is bad, and the eye is not bad because `dd` is False. The 12.65% CMA-only
+figure at 12 000 is what misled -- it made DD look like the differentiator, when
+what actually differs is the *kind* of error. At 12 000 the residual is structured
+and DD removes it to 1.4%. At 14 400 it is white and nothing removes it.
+
+So the open question is narrower and sharper than before, and it is no longer
+about our equaliser: why does the same path, minutes apart, deliver a structured
+error at 12 000 and a white one at nine per cent at 14 400? Every mechanism on our
+side has now been measured and cleared -- level, feed rate, gain re-measurement,
+arithmetic, A-law, the ATA, the constellation and its mapping, timing recovery,
+equaliser length and step, echo, and now the blind-to-decision-directed handover.
+
 ### The constellation and the timing loop, both cleared
 
 Two more suspects, both of the form "fine for 32 points, not fine for 128", and
