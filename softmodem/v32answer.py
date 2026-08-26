@@ -49,6 +49,8 @@ def main():
                          "max(offered & ours), so the default caps the link at "
                          "9600 however much the far end offers; --bis without "
                          "this is still a 9600 link")
+    ap.add_argument("--allow-14400", action="store_true",
+                    help="offer 14 400 as well. It negotiates and then fails -- the far end calls a retrain about 3.6 s into every data phase -- and the 12 000 it demotes to carries 1.98%% where a 12 000 dialled directly carries 100.0000%%, so offering it costs the call and not just the rate. See testrig/v32-ans-path.md")
     ap.add_argument("--regain", type=int, default=None,
                     help="frames of shut eye before re-measuring the gain; "
                          "0 disables it")
@@ -121,6 +123,7 @@ def main():
     print("answered; caller RTP %s:%s PT %d" % (rip, rpt, pt), flush=True)
 
     m = v32fsm.AnswerStartup(level_dbfs=a.level, ans_s=a.ans, rates=rates,
+                             allow_14400=a.allow_14400,
                              trellis=a.trellis, trn=a.trn, bis=a.bis,
                              ec=a.ec, cancel_echo=a.echo,
                              **({} if a.echo_budget is None

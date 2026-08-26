@@ -476,9 +476,11 @@ if __name__ == "__main__":
     def bis_call(rates, frames=3000):
         """Both ends V.32bis-capable, both feeding the same pattern continuously
         once the data phase opens."""
+        # "all five rates" means all five, so this opts past the gate
         ans = v32fsm.AnswerStartup(level_dbfs=-24.0, ans_s=0.6, rates=rates,
-                                   bis=True)
-        org = v32fsm.OriginateStartup(level_dbfs=-24.0, rates=rates, bis=True)
+                                   bis=True, allow_14400=True)
+        org = v32fsm.OriginateStartup(level_dbfs=-24.0, rates=rates, bis=True,
+                                      allow_14400=True)
         to_a = to_o = [0] * 160
         pat = b"V32BIS! "
         ga = bytearray()

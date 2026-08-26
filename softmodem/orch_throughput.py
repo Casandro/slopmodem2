@@ -126,11 +126,20 @@ def main():
                          "leaves well over the minute of data phase asked for")
     ap.add_argument("--level", type=float, default=-18.0)
     ap.add_argument("--feed", type=int, default=64)
-    ap.add_argument("--max", default="14400",
+    ap.add_argument("--max", default=None,
                     help="the modem's own +MS ceiling. With automode 0 the "
                          "Cirrus advertises this rate and nothing else, so it "
                          "is the only way to pin that modem to a rate, and an "
-                         "R1 from us that omits it draws a cleardown")
+                         "R1 from us that omits it draws a cleardown. Defaults "
+                         "to 12000, or 14400 with --allow-14400: letting the "
+                         "modem advertise a rate we have gated out is not wrong "
+                         "-- 5.4.2 still picks max(theirs & ours) -- but it "
+                         "wastes a handshake arguing about it")
+    ap.add_argument("--allow-14400", action="store_true",
+                    help="offer 14 400 at both ends. It negotiates and then "
+                         "fails, and the 12 000 it demotes to carries 1.98%% "
+                         "where a 12 000 dialled directly carries 100.0000%%, "
+                         "so this costs the call and not just the rate")
     ap.add_argument("--no-ec", action="store_true",
                     help="run the data phase in V.14 with no V.42 at all. "
                          "Splits a broken data phase in two: if V.14 carries "
@@ -145,7 +154,7 @@ def main():
                          "trains on the TRN reference rather than blindly")
     ap.add_argument("--no-factory", action="store_true",
                     help="skip AT&F, leaving the stored profile in place")
-    ap.add_argument("--rates", default="4800,7200,9600,12000,14400",
+    ap.add_argument("--rates", default=None,
                     help="the rates our R1 offers. 5.4.2 has us select "
                          "max(offered & ours) and nothing in the code looks at "
                          "how good the line is, though 6.2 recommends R3 "
@@ -161,13 +170,21 @@ def main():
                          "the Conexant offers all five rates at automode 0 and "
                          "with 1 goes off attempting V.8 and never reaches 5.4")
     a = ap.parse_args()
+    # 14 400 is off at both ends unless asked for; see v32fsm._offered_rates
+    if a.rates is None:
+        a.rates = ("4800,7200,9600,12000,14400" if a.allow_14400
+                   else "4800,7200,9600,12000")
+    if a.max is None:
+        a.max = "14400" if a.allow_14400 else "12000"
 
     ans = subprocess.Popen(
         [sys.executable, "-u", "v32answer.py",
          "--seconds", str(a.seconds), "--level", str(a.level),
          "--bis", "--rates", a.rates,
          "--echo", "--send-ascii", "--feed", str(a.feed),
-         "--trn", str(a.trn)] + ([] if a.no_ec else ["--ec"]),
+         "--trn", str(a.trn)]
+        + ([] if a.no_ec else ["--ec"])
+        + (["--allow-14400"] if a.allow_14400 else []),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     out = []
 

@@ -32,6 +32,8 @@ def main():
     ap.add_argument("--ans-hold", type=float, default=1.0)
     ap.add_argument("--trellis", action="store_true")
     ap.add_argument("--rates", default="4800,9600")
+    ap.add_argument("--allow-14400", action="store_true",
+                    help="offer 14 400 as well. It negotiates and then fails -- the far end calls a retrain about 3.6 s into every data phase -- and the 12 000 it demotes to carries 1.98%% where a 12 000 dialled directly carries 100.0000%%, so offering it costs the call and not just the rate. See testrig/v32-ans-path.md")
     ap.add_argument("--bis", action="store_true")
     ap.add_argument("--send", default="")
     ap.add_argument("--ec", action="store_true")
@@ -73,6 +75,7 @@ def main():
     print("answered; far RTP %s:%s PT %d" % (rip, rpt, pt), flush=True)
 
     m = v32fsm.OriginateStartup(level_dbfs=a.level, rates=rates,
+                                allow_14400=a.allow_14400,
                                 trellis=a.trellis, trn=a.trn, bis=a.bis,
                                 ec=a.ec, cancel_echo=a.echo,
                                 ans_hold=a.ans_hold,

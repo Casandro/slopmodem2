@@ -2758,6 +2758,41 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### 14 400 is not offered by default
+
+Gated in `v32fsm._offered_rates()`, which is the only place it needs to be:
+everything downstream reads `self.rates` -- what R1 advertises, and both
+intersections where 5.4.2 chooses a rate -- so filtering at the two assignment
+points covers the answerer and the caller together. `--allow-14400` puts it back,
+at both ends: `orch_throughput.py` also lifts the modem's own `+MS` ceiling with
+the same flag, because letting the far end advertise a rate we have gated out is
+not wrong -- 5.4.2 still picks max(theirs & ours) -- but it wastes a handshake
+arguing about it. The bench harnesses that exist to measure every rate
+(`chansweep.py`, `v32bis_rates.py`, and the all-five-rates case in
+`test_v32start.py`) opt past the gate explicitly. It never gates to nothing: a
+rate list of only 14 400 comes back as 4800, which 5.4.2 makes mandatory anyway.
+
+The reason it is gated rather than left to fail on its own is the demotion, and
+the escape hatch demonstrates it better than any argument. With 14 400 offered,
+one call collapsed three times and finished at **7200** -- `down 3 after 3
+collapses` -- where the same line with the gate in place gives 12 000 at
+100.0000% with no retrains at all. Offering a rate we cannot hold does not cost
+us that rate. It costs us the call.
+
+Two runs from a plain `orch_throughput.py --port ... --dial ATDT`, nothing pinned:
+
+| | |
+|---|---|
+| R1 offered | 4800, 7200, 9600, 12000 |
+| negotiated | 12 000, V.42/LAPM, **0 retrains** |
+| modem to softmodem | 111 360 octets, 1342 byte/s, 89% of line |
+| softmodem to modem | 111 168 octets, 1342 byte/s, 89% of line |
+| pattern | 111 168 of 111 168, **100.0000%** |
+
+The gate is a decision about defaults, not a repair. The 3.6 s retrain at 14 400
+and the demotion that follows it are both still there, still described above, and
+still worth fixing -- `--allow-14400` is how they get looked at again.
+
 ### The demoted 12 000 is broken above the physical layer, not in it
 
 A 12 000 dialled directly carries 112 000 of 112 000 octets, 100.0000%, with

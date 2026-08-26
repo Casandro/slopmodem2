@@ -212,6 +212,9 @@ def main():
                          "picks max(theirs & ours), so this only chooses "
                          "anything when the modem offers more than one -- which "
                          "needs automode 1 in --ms")
+    ap.add_argument("--allow-14400", action="store_true",
+                    help="pass --allow-14400 to v32answer.py, which otherwise "
+                         "does not offer 14 400 at all")
     ap.add_argument("--no-pattern", action="store_true",
                     help="stay idle after CONNECT instead of sending AAA2BBB")
     ap.add_argument("--dial", default="ATD",
@@ -242,6 +245,8 @@ def main():
         cmd += ["--regain", str(a.regain)]
     if a.rates:
         cmd += ["--rates", a.rates]
+    if a.allow_14400:
+        cmd += ["--allow-14400"]
     if a.trellis:
         cmd.append("--trellis")
     if a.ec:

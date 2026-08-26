@@ -19,9 +19,11 @@ PAT = b"V32BIS! "
 
 
 def call(rates, frames=3000, level=-24.0):
+    # the whole point of this sweep is all five rates, gate included
     ans = v32fsm.AnswerStartup(level_dbfs=level, ans_s=0.6, rates=rates,
-                               bis=True)
-    org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True)
+                               bis=True, allow_14400=True)
+    org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True,
+                                  allow_14400=True)
     to_a = to_o = [0] * 160
     ga, go = bytearray(), bytearray()
     i = 0

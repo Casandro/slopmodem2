@@ -1216,6 +1216,36 @@ class _Base:
         return out
 
 
+GATED_RATES = (14400,)              # see _offered_rates()
+
+
+def _offered_rates(rates, allow_gated):
+    """The rates we are willing to put in a rate signal.
+
+    14 400 is not offered unless it is asked for. It negotiates perfectly well
+    and then does not work: the far end holds a carrier state about 3.6 s into
+    every data phase and calls a retrain, whatever we send -- the same failure
+    with only idle on the line as with data. That much would merely be a rate we
+    cannot reach, and 5.4.2 would demote us to 12 000 and carry on.
+
+    The reason it is gated rather than simply left to fail is the demotion. A
+    12 000 dialled directly carries 112 000 of 112 000 octets, 100.0000%, with
+    V.42/LAPM. A 12 000 *arrived at* by offering 14 400 and collapsing carries
+    1.98% and recovers nothing at all, and the fault is above the physical layer
+    -- the identical call with --no-ec carries 91.1% with the eye at a median
+    distance of 0.093 and every symbol inside 0.35 of a point. So offering a rate
+    we cannot hold does not cost us that rate, it costs us the call. Until the
+    retrain path is fixed, not offering it is worth far more than the 20% of line
+    rate it might have bought.
+
+    Everything downstream reads self.rates -- what R1 advertises, and both
+    intersections where a rate is chosen -- so this is the only place the gate
+    has to be.
+    """
+    keep = tuple(r for r in rates if allow_gated or r not in GATED_RATES)
+    return keep or (4800,)      # 5.4.2's mandatory rate, never gate to nothing
+
+
 class AnswerStartup(_Base):
     """Answer mode, §5.4.2."""
 
@@ -1223,7 +1253,7 @@ class AnswerStartup(_Base):
 
     def __init__(self, level_dbfs=-24.0, ans_s=1.0, rates=(4800, 9600),
                  log=None, trellis=False, trn=TRN_MIN, bis=False, ec=False, cancel_echo=False,
-                 echo_budget=echomod.SEARCH_BUDGET):
+                 echo_budget=echomod.SEARCH_BUDGET, allow_14400=False):
         _Base.__init__(self, level_dbfs, v32.Scrambler.GPA,
                        v32.Scrambler.GPC, log)
         self.can_trellis = bool(trellis)
@@ -1252,7 +1282,10 @@ class AnswerStartup(_Base):
         import ansam
         self.ans = list(ansam.ans_samples(ans_s, level_dbfs=level_dbfs))
         self.ans_pos = 0
-        self.rates = tuple(rates)
+        want = tuple(rates)
+        self.rates = _offered_rates(want, allow_14400)
+        self.gated_rates = tuple(r for r in want
+                                 if r not in self.rates)
         self.state = ANS
         self.rev = Reversal(1800.0)
         self.tone_run = 0
@@ -1545,6 +1578,7 @@ class OriginateStartup(_Base):
     IS_CALLER = True
 
     def __init__(self, level_dbfs=-24.0, rates=(4800, 9600), log=None,
+                 allow_14400=False,
                  ans_hold=1.0, trellis=False, trn=TRN_MIN,
                  bis=False, ec=False, cancel_echo=False,
                  echo_budget=echomod.SEARCH_BUDGET):
@@ -1562,7 +1596,10 @@ class OriginateStartup(_Base):
             # them is offering the coding
             self.can_trellis = True
         self.trn_len = int(trn)
-        self.rates = tuple(rates)
+        want = tuple(rates)
+        self.rates = _offered_rates(want, allow_14400)
+        self.gated_rates = tuple(r for r in want
+                                 if r not in self.rates)
         self.state = WAITANS
         self.rev600 = Reversal(600.0)
         self.rev3000 = Reversal(3000.0)

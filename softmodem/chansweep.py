@@ -84,10 +84,11 @@ def call(rate, ch_a, ch_o, frames=1500, level=-24.0, echo=None,
     own instance keeps their drift and noise independent, as two real clocks are.
     """
     rates = (rate,)
+    # this harness exists to measure every rate, including the gated one
     ans = v32fsm.AnswerStartup(level_dbfs=level, ans_s=0.6, rates=rates,
-                               bis=True, cancel_echo=cancel)
+                               bis=True, cancel_echo=cancel, allow_14400=True)
     org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True,
-                                  cancel_echo=cancel)
+                                  cancel_echo=cancel, allow_14400=True)
     to_a = to_o = [0] * 160
     rng = random.Random(99)
     ga, go = bytearray(), bytearray()
