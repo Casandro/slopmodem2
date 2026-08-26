@@ -2758,6 +2758,60 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### What the Recommendation expects the receiver to do, and what we do instead
+
+After every mechanism on our side had been measured and cleared, the thing left
+unexamined was the assumption underneath all of them: that the equaliser has to
+work this out for itself. It does not, and the Recommendation says so in one
+sentence.
+
+**5.2.3, of segment 3:** "Segment 3 is intended for **training the adaptive
+equaliser in the receiving modem** and the echo canceller in the transmitting
+modem." TRN is not a warm-up. It is a training sequence, it runs for at least 1280
+and up to 8192 symbol intervals, and it is *deterministic*: scrambled ones through
+a known polynomial, with "successive scrambled dibits ... encoded onto transmitted
+signal states in accordance with Table 4/V.32 bis **directly without differential
+encoding**". The Recommendation prints the opening symbols for both directions so
+there is nothing left to infer:
+
+    call mode, GPC    C C C C C C C C C A A A C C C
+    answer mode, GPA  C C C A A C C C A A C C A C C
+
+So a receiver can generate TRN locally and adapt against a known reference. That
+is what a reference-directed LMS is, it converges in a fraction of the time a
+blind algorithm takes, and it is what the implementations do: a V.32bis modem
+patent of the period describes exactly "a further equalizer training according to
+a well known least mean square (LMS) algorithm for 2000 T based on the received
+TRN signal".
+
+**`tracking.py` has no reference training at all.** Its equaliser has two modes,
+blind CMA and decision-directed, and `grep` for TRN in it finds one comment about
+levels. We blind-equalise through the segment the standard supplies as a training
+sequence and publishes the contents of.
+
+That is not merely wasteful, it is the failure. CMA's cost function assumes a
+constant modulus, which a 128-point constellation with many amplitude rings badly
+violates, so its irreducible error grows with constellation density -- and the
+literature names the consequence precisely: constant-modulus algorithms "present a
+large mean-square error for high-order QAM signals, **which may damage the
+switching to decision-directed-based algorithms**". That is this rig's 14 400,
+described by someone else years ago: CMA settles at 9%, the handover to
+decision-directed needs better than that, it never comes, and the equaliser stays
+blind for the whole call.
+
+It also explains the shape of everything measured. Why 12 000 works and 14 400
+does not: at 64 points CMA's residual is small enough to hand over, at 128 it is
+not. Why more taps, a smaller step and a narrower loop bandwidth all bought
+nothing: they address ISI, and CMA misadjustment is not ISI. Why the error is
+white: it is gradient noise from a cost function that does not fit the signal, not
+a channel the filter failed to invert. And why the reduced-constellation bootstrap
+did not rescue it either: it improves the *decisions*, but the taps it starts from
+are a CMA solution, and 2400 symbols of coarse-decision adaptation is not the
+1280-to-8192 symbols of reference training the standard budgeted for.
+
+The line was never the problem, and neither, in the end, was the far end. The
+receiver is solving a harder problem than V.32bis asks it to.
+
 ### The blind-equaliser theory: built, measured, discarded
 
 The sharpest-looking explanation yet, and it was wrong. Sorting every run by
