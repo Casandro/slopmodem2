@@ -2758,6 +2758,52 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### A line we designed ourselves, and the bug it found
+
+Every instrument the rig can offer is now worse than the thing being measured:
+the voice-mode capture floors at 7.1% of the rms radius on a pure tone and the
+14 400 decision margin is 11.0%. So `channel.py` builds the line instead --
+amplitude tilt, band edges, parabolic group delay distortion, sampling-clock
+offset and noise -- and `chansweep.py` puts one between two soft modems. Two
+seconds per call, and the impairment is known rather than inferred.
+
+It found a real defect immediately. At 14 400 the receiver sat at a median of
+8.8% of the rms radius **on a channel with no impairment at all** while 12 000 on
+the same call sat at 0.7%. `rescale_to()` defers its gain correction until it has
+enough symbols to measure the new constellation's power -- and that correction is
+worth a factor of 4.7 -- but `train_ref()` has already asserted `dd`. So the
+decision-directed loop spends the whole deferral adapting against a target its
+output cannot reach. Every error in that window is not an error; it is the
+pending gain step in disguise, walking the taps somewhere they should never go.
+The window is 200 symbols per 32 points, so 14 400 gets 800 symbols of it against
+12 000's 400, with half the decision margin to survive it. 12 000 recovered.
+14 400 locked and stayed locked.
+
+Learning nothing while the gain is known to be wrong fixes it. Four seeds per
+channel, before and after: at 14 400 over flat, delay-distorted and noisy lines
+the result becomes deterministic and maximal -- 3967, 3859, 3967 octets every
+seed, no retrains -- where before, the noisy line gave 2063, 3411, 0 and 455 with
+retrains. Over a genuinely impaired line (-6 dB tilt, 1 ms delay distortion,
+-43 ppm, 32 dB SNR) 14 400 goes from 2463-3395 with retrains to 3715-3775 with
+none, and 12 000 on that same line is 3735 either way, so nothing was traded.
+
+**And it does not fix the rig.** The next 14 400 call over the ATA failed exactly
+as before -- `5.5 retrain 1: the far end is holding a carrier state`, 3.7 s into
+the data phase, the same signature to a tenth of a second. The bench bug was real
+and worth fixing on its own terms, but it is not the one the rig is hitting.
+
+That is itself informative, and it sharpens the case rather than weakening it.
+Our receiver now carries 14 400 cleanly over a simulated line far worse than the
+rig's -- and the rig's line is a digital SIP path whose only analogue insult is
+one A-law pass. So the far end's refusal cannot be explained by line quality at
+any level, because the line is better than one we demonstrably survive. What is
+left is categorical: something about our signal that a Cirrus objects to and our
+own receiver does not, which is exactly the class of fault a soft-to-soft test can
+never expose, since both ends share every assumption.
+
+The 12 000 path is unchanged by all of this: 96 384 of 96 384 octets, 100.0000%,
+89% of line in both directions at once.
+
 ### 14 400, narrowed further: it is our carrier the far end refuses
 
 Four things established in one sitting, each closing off a candidate.
