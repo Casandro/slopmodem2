@@ -2758,6 +2758,42 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### Why two runs of the same rate differ by a factor of fifty
+
+The analog path does not change between calls, so a 12 000 link that carries
+100.0000% in one run and 2% in the next is not the line. What differs is *how the
+run arrived at 12 000*.
+
+| how 12 000 was reached | result |
+|---|---|
+| negotiated directly (`+MS` pinned to 12 000) | **111 744 of 111 751 octets, V.42 up, 89% both ways** |
+| after two collapses at 14 400 | 92% of 75 540 octets, V.14, one run |
+| after two collapses at 14 400 | **2%** of 69 304 octets, V.14, the next run |
+| after three collapses, ending at 7200 | 47.6% of 33 010 octets |
+
+The receiver is built **once per call** -- `self.rx = None` appears only in
+`_Base.__init__` -- and `_retrain_begin` does not touch it. So the TRN training
+runs on the first conditioning signal and never again, because `_ref_done` stays
+set. 5.5 sends a complete new conditioning signal after every retrain, S, S-bar
+and TRN, and 5.2.3 says what that TRN is for; we watch it go past. A link that
+reaches its rate after a collapse is therefore running on whatever taps the
+collapse left behind, and how good those are is luck. That is the factor of fifty,
+and it is a state-machine difference rather than a physical one.
+
+**The obvious fix is wrong, which is worth recording.** Releasing the training
+state in `_retrain_begin` so the next TRN trains again -- four lines -- takes the
+*direct* 12 000 path from 100.0000% to 0.86%, checked by reverting the one file
+and re-running. The likely reason is that a reference generated from an all-zero
+scrambler no longer matches a far end that has restarted its conditioning signal
+mid-call, so re-arming installs a *misaligned* reference over a converged
+equaliser and wrecks it. The alignment test refuses a bad match at 90%, which is
+evidently not strict enough to catch that case.
+
+So retraining after a retrain needs the alignment to be verified against the
+post-retrain scrambler state rather than assumed, and until it is, the honest
+statement is that our receiver cannot recover a rate once it has collapsed. The
+patch is kept out of tree.
+
 ### What the Recommendation expects the receiver to do, and what we do instead
 
 After every mechanism on our side had been measured and cleared, the thing left
