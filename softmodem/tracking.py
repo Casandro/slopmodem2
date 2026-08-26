@@ -323,6 +323,15 @@ class StreamRx:
         # number of symbols. Pulling in a half-symbol timing offset took ~2500
         # symbols in measurement, so any fixed schedule is either too short for
         # the bad cases or wasteful for the good ones.
+        # 5.2.3: "Segment 3 is intended for training the adaptive equaliser in
+        # the receiving modem". TRN is scrambled ones through a known polynomial
+        # with differential coding off, so the receiver can generate it and adapt
+        # against a *known* reference instead of against its own decisions or a
+        # blind cost function. train_ref() supplies it.
+        self.ref = None
+        self.ref_i = 0
+        self.ref_used = 0
+        self.ref_err = 0.0
         self.acq_min, self.acq_win = acq_min, acq_win
         self.acq_check, self.acq_thresh = acq_check, acq_thresh
         self.lose_thresh, self.lose_hold = lose_thresh, lose_hold
@@ -466,6 +475,25 @@ class StreamRx:
     # for a direct gain correction. 16 is 4x in amplitude -- far outside anything
     # a converging CMA produces, and far inside where the cubic term explodes.
     CMA_CLAMP = 16.0
+
+    def train_ref(self, points):
+        """Adapt against a known symbol sequence rather than blindly.
+
+        Reference-directed LMS is what 5.2.3 budgets 1280 to 8192 symbols of TRN
+        for, and it converges in a fraction of what a blind algorithm needs --
+        the cost of blindness being, in the literature's words, a large
+        mean-square error on high-order QAM that damages the switch to
+        decision-directed operation. Which is this rig's 14400 exactly: CMA
+        settles near 9% and the handover never comes.
+
+        Entering it also asserts dd, so that when the reference runs out the
+        loop continues on its own decisions rather than falling back to blind.
+        """
+        self.ref = list(points)
+        self.ref_i = 0
+        self.ref_used = 0
+        self.ref_err = 0.0
+        self.dd = True
 
     def rescale_to(self, mode, nsym=None):
         """Switch constellation and re-measure the output gain, once.
@@ -629,7 +657,24 @@ class StreamRx:
                     y += w[k] * eq[ntaps - 1 - k]
                 yr = y * cmath.exp(-1j * ph)
 
-                if not dd:
+                ref = self.ref
+                if ref is not None and self.ref_i < len(ref):
+                    # ---- reference-directed (5.2.3's purpose for TRN) ----
+                    d = ref[self.ref_i]
+                    self.ref_i += 1
+                    self.ref_used += 1
+                    e_rot = d - yr
+                    e_eq = e_rot * cmath.exp(1j * ph)
+                    mu = mu_dd
+                    nrm = sum(abs(v) ** 2 for v in eq) + 1e-9
+                    e_c = (yr * d.conjugate()).imag / (abs(d) ** 2 + 1e-9)
+                    c_freq += ki_c * e_c
+                    ph += kp_c * e_c + c_freq
+                    self.ref_err += 0.01 * (abs(e_rot) ** 2 - self.ref_err)
+                    fast = self.fast_err + 0.1 * (abs(e_rot) ** 2
+                                                  - self.fast_err)
+                    self.fast_err = fast
+                elif not dd:
                     # CMA: cost depends on |y| only, so it is blind to ph and
                     # adapts on the unrotated output.
                     a2 = y.real * y.real + y.imag * y.imag

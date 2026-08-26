@@ -403,6 +403,15 @@ class _Rx:
                                     beta=v32.ROLLOFF, span=10, acq_min=400,
                                     acq_win=400, settle=200)
         self.descr = v32.Scrambler(far_taps)
+        # 5.2.3's training sequence, generated locally from the far end's
+        # polynomial so the equaliser can be trained against a known reference
+        # instead of blindly. Built lazily: it costs a few thousand symbols of
+        # scrambler and is only wanted once per receiver.
+        self.far_taps = far_taps
+        self._trn_ref = None
+        self._align = []
+        self._ref_done = False
+        self._align_tries = 0
         self.scan = RateScanner()
         self.prev_y = None
         self.mode = v32.QPSK4800
@@ -480,6 +489,8 @@ class _Rx:
                 if self.ec_bits is not None:
                     self.ec_bits.extend(got)
             return []
+        if not self._ref_done and not self.on_data:
+            self._try_train(syms)
         bits, self.prev_y = self.mode.decode(syms, self.prev_y)
         # Descramble always -- the descrambler is self-synchronising and must
         # keep consuming -- but only offer bits to the rate scanner once the
@@ -498,7 +509,19 @@ class _Rx:
         out = self.descr.descramble(bits)
         if not self.rx.dd:
             return []
-        return self.scan.feed(out)
+        got = self.scan.feed(out)
+        if got and self.rx.ref is not None:
+            # TRN has ended: the far end is sending a rate signal now, and every
+            # further reference symbol would drive the equaliser toward a target
+            # the line no longer carries. Left running, the training reference
+            # ran 8288 symbols past the end of segment 3 and wrecked the taps it
+            # had just converged.
+            self._ev_trn = ("%s; trained on %d symbols, stopped at the rate "
+                            "signal" % (getattr(self, "_ev_trn", ""),
+                                        self.rx.ref_used))
+            self.rx.ref = None
+            self._ref_done = True
+        return got
 
     def _data_bits(self, syms):
         """Symbols -> the far end's scrambled bit stream, in whichever coding
@@ -535,6 +558,80 @@ class _Rx:
         self.framer = tracking.AsyncFramer()
         self.data_syms = []
         self.data_bits = []
+
+    ALIGN_SYM = 96              # symbols used to locate ourselves in TRN
+    ALIGN_MIN = 0.90            # and how well they have to match to be believed
+    ALIGN_TRIES = 12            # attempts before giving up on the reference
+    TRN_MAX = 256 + 8192        # 5.2.3's longest segment 3, plus segment 2
+
+    def _try_train(self, syms):
+        """Find where in TRN we are, then train the equaliser against it.
+
+        We open the receiver partway through segment 3 -- 5.2.3 allows it to run
+        from 1280 to 8192 symbols and the far end chooses -- so the reference has
+        to be aligned before it can be used. The sequence is deterministic, so
+        this is a search: decide ALIGN_SYM symbols onto the four-point set, whose
+        70.7% margin makes those decisions reliable even on a poor eye, and slide
+        them along the generated sequence. A right alignment matches nearly
+        perfectly and a wrong one matches at chance, so the test is unambiguous
+        and refuses itself when the eye is too bad to trust.
+        """
+        self._align.extend(syms)
+        if len(self._align) < self.ALIGN_SYM:
+            return
+        want = self._align[:self.ALIGN_SYM]
+        if self._trn_ref is None:
+            self._trn_ref = [complex(*v32.ABCD[c])
+                             for c in v32.trn_states(self.TRN_MAX,
+                                                     self.far_taps)]
+        ref = self._trn_ref
+
+        # Align on *differences* between consecutive symbols, not on the symbols.
+        # CMA adapts on |y| alone and is blind to phase -- the constellation sits
+        # at whatever angle it happens to, possibly turning -- so absolute
+        # decisions cannot match a reference: measured, the first attempt scored
+        # 47% against chance of 25%, which is a rotated constellation and not a
+        # misalignment. A quadrant difference is invariant under a constant
+        # rotation and survives a slow one, and 5.2.3 turns differential coding
+        # *off* after segment 2, so the differences carry the sequence.
+        def quads(zs):
+            return [int((cmath.phase(z) % (2 * math.pi)) / (math.pi / 2))
+                    % 4 for z in zs]
+
+        def diffs(q):
+            return [(q[i + 1] - q[i]) % 4 for i in range(len(q) - 1)]
+
+        dq = diffs(quads(want))
+        rq = diffs(quads(ref))
+        n = len(dq)
+        best, at = 0, None
+        for off in range(len(rq) - n):
+            hit = 0
+            for i in range(n):
+                if dq[i] == rq[off + i]:
+                    hit += 1
+            if hit > best:
+                best, at = hit, off
+                if hit == n:
+                    break
+        frac = best / float(n)
+        self._align = []
+        if at is None or frac < self.ALIGN_MIN:
+            # One attempt is not enough: the receiver opens at the *start* of
+            # TRN, where CMA has had almost no time and even quadrant decisions
+            # on the four-point set are unreliable -- measured, 44% against
+            # chance of 25%. 5.2.3 gives at least 1280 symbols and up to 8192,
+            # so there is room to keep trying as the eye opens.
+            self._align_tries += 1
+            self._ref_done = self._align_tries >= self.ALIGN_TRIES
+            self._ev_trn = ("TRN alignment refused on try %d: best %.0f%% at %s"
+                            % (self._align_tries, 100.0 * frac, at))
+            return
+        self._ref_done = True
+        self._ev_trn = ("TRN aligned at symbol %d, %.0f%% of %d differences "
+                        "matched - training the equaliser on it"
+                        % (at, 100.0 * frac, n))
+        self.rx.train_ref(ref[at + self.ALIGN_SYM:])
 
     def to_data(self, mode, trellis=False, ts=None):
         """Switch to the data constellation, keeping timing and equaliser.
@@ -644,6 +741,7 @@ class _Base:
         self.data_sym = None        # tx.nsym when the data phase began
         self.seg_base = 0.0         # tx.nsym at the start of the current segment
         self.listening = False
+        self._trn_logged = None
 
     def _ev(self, msg):
         self.events.append((round(self.t, 3), self.state, msg))
@@ -1100,6 +1198,14 @@ class _Base:
                                     else ref + 0.25 * (e[0] - ref))
                 for p in self.rx.feed(inbound):
                     self._on_rate(p)
+                # Surface what the TRN training did. It decides whether the
+                # equaliser starts the data phase converged or blind, which is
+                # the difference between 1.3% and 9.2% of the rms radius, so it
+                # belongs in the log rather than in an attribute.
+                note = getattr(self.rx, "_ev_trn", None)
+                if note and note != self._trn_logged:
+                    self._trn_logged = note
+                    self._ev(note)
         self.tx.fill(FRAME, self)
         out = self.tx.take(FRAME)
         if self.echo is not None:
