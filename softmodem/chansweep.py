@@ -33,15 +33,60 @@ import v32fsm
 PAT = b"V32BIS! "
 
 
-def call(rate, ch_a, ch_o, frames=1500, level=-24.0):
+class Echo:
+    """Our own transmission, leaking back into our own receiver.
+
+    The one thing the channel pair does not model. V.32 is full duplex in a
+    single band on a single pair, so every real installation puts some of what a
+    modem sends back into what it hears, and cancelling it is the receiver's
+    problem. Two paths, because a real hybrid has two: a near echo a few ms out,
+    and a talker echo at the round trip. The rig measured 43.5 dB of return loss,
+    so the default is deliberately harsher than that -- the point is to find
+    where our receiver breaks, not to reproduce one line.
+
+    This is a coupling between the two directions rather than a property of
+    either, which is why it lives here and not in channel.py.
+    """
+
+    def __init__(self, near_db=-30.0, near_ms=4.0,
+                 far_db=-45.0, far_ms=40.0):
+        self.g1 = 10.0 ** (near_db / 20.0)
+        self.g2 = 10.0 ** (far_db / 20.0)
+        self.d1 = int(near_ms * 8.0)
+        self.d2 = int(far_ms * 8.0)
+        self.buf = [0.0] * (self.d2 + 8000)
+
+    def step(self, mine, heard):
+        """heard + whatever of `mine` the hybrid sends back."""
+        self.buf.extend(float(v) for v in mine)
+        n = len(self.buf)
+        out = []
+        base = n - len(mine)
+        for i, v in enumerate(heard):
+            k = base + i
+            e = 0.0
+            if k - self.d1 >= 0:
+                e += self.g1 * self.buf[k - self.d1]
+            if k - self.d2 >= 0:
+                e += self.g2 * self.buf[k - self.d2]
+            out.append(int(round(v + e)))
+        if len(self.buf) > self.d2 + 16000:
+            del self.buf[:len(self.buf) - (self.d2 + 8000)]
+        return out
+
+
+def call(rate, ch_a, ch_o, frames=1500, level=-24.0, echo=None,
+         cancel=False):
     """One soft-to-soft call at one rate, each direction through its own channel.
 
     Two channels, not one: a line impairs both directions, and giving each its
     own instance keeps their drift and noise independent, as two real clocks are.
     """
     rates = (rate,)
-    ans = v32fsm.AnswerStartup(level_dbfs=level, ans_s=0.6, rates=rates, bis=True)
-    org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True)
+    ans = v32fsm.AnswerStartup(level_dbfs=level, ans_s=0.6, rates=rates,
+                               bis=True, cancel_echo=cancel)
+    org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True,
+                                  cancel_echo=cancel)
     to_a = to_o = [0] * 160
     ga, go = bytearray(), bytearray()
     i = 0
@@ -52,6 +97,10 @@ def call(rate, ch_a, ch_o, frames=1500, level=-24.0):
         # answerer's output crosses to the originator and vice versa
         to_o = ch_o.step(oa)
         to_a = ch_a.step(oo)
+        if echo is not None:
+            ea, eo = echo
+            to_a = ea.step(oa, to_a)      # the answerer hears its own transmit
+            to_o = eo.step(oo, to_o)
         if ans.state == v32fsm.DATA and org.state == v32fsm.DATA:
             if entered is None:
                 entered = k * 0.02
@@ -100,10 +149,14 @@ def eye(m, n=3000):
 MARGIN = {4800: 70.7, 7200: 31.6, 9600: 22.4, 12000: 15.4, 14400: 11.0}
 
 
-def run(rate, name, over, frames, level):
+def run(rate, name, over, frames, level, echo_db=None, cancel=False):
     ch_a = channel.make(name, **over)
     ch_o = channel.make(name, seed=2, **over)
-    ans, org, ga, go, entered = call(rate, ch_a, ch_o, frames, level)
+    ec = None
+    if echo_db is not None:
+        ec = (Echo(near_db=echo_db), Echo(near_db=echo_db))
+    ans, org, ga, go, entered = call(rate, ch_a, ch_o, frames, level, ec,
+                                    cancel)
     rt = getattr(ans, "retrains", 0) + getattr(org, "retrains", 0)
     return dict(rate=rate, entered=entered,
                 eye_a=eye(ans), eye_o=eye(org),
@@ -129,6 +182,14 @@ def main():
     ap.add_argument("--rate", type=int, default=None, help="one rate, else all")
     ap.add_argument("--frames", type=int, default=1500, help="20 ms each")
     ap.add_argument("--level", type=float, default=-24.0)
+    ap.add_argument("--echo", type=float, default=None,
+                    help="near-echo return loss in dB, e.g. -30. The rig "
+                         "measured 43.5 dB of return loss; the channel pair "
+                         "models no echo at all, which is the one thing a real "
+                         "full-duplex pair always has")
+    ap.add_argument("--cancel", action="store_true",
+                    help="run the echo canceller, which --echo otherwise leaves "
+                         "with nothing to do and no way to show itself")
     ap.add_argument("--sweep", default=None,
                     help="vary one parameter, e.g. delay_ms=0,0.5,1,2")
     a = ap.parse_args()
@@ -142,7 +203,7 @@ def main():
         for v in [float(x) for x in vals.split(",")]:
             print("%s = %g" % (key, v))
             for rate in rates:
-                print(line(run(rate, base, {key: v}, a.frames, a.level)))
+                print(line(run(rate, base, {key: v}, a.frames, a.level, a.echo, a.cancel)))
             print()
         return 0
 
@@ -157,7 +218,7 @@ def main():
                                           for t in band))
         print("   rate   reached    eye (ans / org)                data   match")
         for rate in rates:
-            print(line(run(rate, name, {}, a.frames, a.level)))
+            print(line(run(rate, name, {}, a.frames, a.level, a.echo, a.cancel)))
         print()
     return 0
 
