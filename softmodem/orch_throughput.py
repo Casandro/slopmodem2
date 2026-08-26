@@ -131,6 +131,11 @@ def main():
                          "Cirrus advertises this rate and nothing else, so it "
                          "is the only way to pin that modem to a rate, and an "
                          "R1 from us that omits it draws a cleardown")
+    ap.add_argument("--no-ec", action="store_true",
+                    help="run the data phase in V.14 with no V.42 at all. "
+                         "Splits a broken data phase in two: if V.14 carries "
+                         "characters where V.42 carried none, the physical "
+                         "layer is fine and the fault is in the link layer")
     ap.add_argument("--trn", type=int, default=1280,
                     help="TRN symbols we send. 5.2.3 permits 1280 to 8192 and "
                          "we have always sent the floor, at every rate. The far "
@@ -161,8 +166,8 @@ def main():
         [sys.executable, "-u", "v32answer.py",
          "--seconds", str(a.seconds), "--level", str(a.level),
          "--bis", "--rates", a.rates,
-         "--ec", "--echo", "--send-ascii", "--feed", str(a.feed),
-         "--trn", str(a.trn)],
+         "--echo", "--send-ascii", "--feed", str(a.feed),
+         "--trn", str(a.trn)] + ([] if a.no_ec else ["--ec"]),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     out = []
 

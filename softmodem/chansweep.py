@@ -25,6 +25,7 @@ What is scored, and why each is scored the way it is:
   python3 chansweep.py --rate 14400 --sweep delay_ms=0,0.5,1,1.5,2
 """
 import argparse
+import random
 import sys
 
 import channel
@@ -76,7 +77,7 @@ class Echo:
 
 
 def call(rate, ch_a, ch_o, frames=1500, level=-24.0, echo=None,
-         cancel=False):
+         cancel=False, hit=None):
     """One soft-to-soft call at one rate, each direction through its own channel.
 
     Two channels, not one: a line impairs both directions, and giving each its
@@ -88,6 +89,7 @@ def call(rate, ch_a, ch_o, frames=1500, level=-24.0, echo=None,
     org = v32fsm.OriginateStartup(level_dbfs=level, rates=rates, bis=True,
                                   cancel_echo=cancel)
     to_a = to_o = [0] * 160
+    rng = random.Random(99)
     ga, go = bytearray(), bytearray()
     i = 0
     entered = None
@@ -101,6 +103,15 @@ def call(rate, ch_a, ch_o, frames=1500, level=-24.0, echo=None,
             ea, eo = echo
             to_a = ea.step(oa, to_a)      # the answerer hears its own transmit
             to_o = eo.step(oo, to_o)
+        if hit is not None and hit[0] <= k * 0.02 < hit[0] + hit[1]:
+            # Damage the link hard enough to force a 5.5 retrain, so the
+            # *recovery* can be measured. Noise, not a level cut: the write-up
+            # records that an 18 dB cut produces no retrain at all and should
+            # not, because an equaliser simply follows a level change. Damage is
+            # not the same as change.
+            amp = hit[2] * (sum(abs(v) for v in to_a) / max(1, len(to_a)) + 1.0)
+            to_a = [int(v + rng.gauss(0.0, amp)) for v in to_a]
+            to_o = [int(v + rng.gauss(0.0, amp)) for v in to_o]
         if ans.state == v32fsm.DATA and org.state == v32fsm.DATA:
             if entered is None:
                 entered = k * 0.02
@@ -149,14 +160,15 @@ def eye(m, n=3000):
 MARGIN = {4800: 70.7, 7200: 31.6, 9600: 22.4, 12000: 15.4, 14400: 11.0}
 
 
-def run(rate, name, over, frames, level, echo_db=None, cancel=False):
+def run(rate, name, over, frames, level, echo_db=None, cancel=False,
+        hit=None):
     ch_a = channel.make(name, **over)
     ch_o = channel.make(name, seed=2, **over)
     ec = None
     if echo_db is not None:
         ec = (Echo(near_db=echo_db), Echo(near_db=echo_db))
     ans, org, ga, go, entered = call(rate, ch_a, ch_o, frames, level, ec,
-                                    cancel)
+                                    cancel, hit)
     rt = getattr(ans, "retrains", 0) + getattr(org, "retrains", 0)
     return dict(rate=rate, entered=entered,
                 eye_a=eye(ans), eye_o=eye(org),
@@ -187,6 +199,10 @@ def main():
                          "measured 43.5 dB of return loss; the channel pair "
                          "models no echo at all, which is the one thing a real "
                          "full-duplex pair always has")
+    ap.add_argument("--hit", default=None,
+                    help="force a retrain and measure the recovery: "
+                         "AT,LEN,AMP in seconds and multiples of the signal "
+                         "level, e.g. 20,3,0.8")
     ap.add_argument("--cancel", action="store_true",
                     help="run the echo canceller, which --echo otherwise leaves "
                          "with nothing to do and no way to show itself")
@@ -195,6 +211,10 @@ def main():
     a = ap.parse_args()
 
     rates = [a.rate] if a.rate else [4800, 7200, 9600, 12000, 14400]
+    hit = None
+    if a.hit:
+        p = [float(x) for x in a.hit.split(",")]
+        hit = (p[0], p[1], p[2] if len(p) > 2 else 0.8)
 
     if a.sweep:
         key, vals = a.sweep.split("=", 1)
@@ -203,7 +223,7 @@ def main():
         for v in [float(x) for x in vals.split(",")]:
             print("%s = %g" % (key, v))
             for rate in rates:
-                print(line(run(rate, base, {key: v}, a.frames, a.level, a.echo, a.cancel)))
+                print(line(run(rate, base, {key: v}, a.frames, a.level, a.echo, a.cancel, hit)))
             print()
         return 0
 
@@ -218,7 +238,7 @@ def main():
                                           for t in band))
         print("   rate   reached    eye (ans / org)                data   match")
         for rate in rates:
-            print(line(run(rate, name, {}, a.frames, a.level, a.echo, a.cancel)))
+            print(line(run(rate, name, {}, a.frames, a.level, a.echo, a.cancel, hit)))
         print()
     return 0
 

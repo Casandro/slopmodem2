@@ -2758,6 +2758,57 @@ every data phase, and the fact that the direction which actually tears the call
 down is the other one — the far end asking us to retrain, in almost every call
 against the Cirrus.
 
+### The demoted 12 000 is broken above the physical layer, not in it
+
+A 12 000 dialled directly carries 112 000 of 112 000 octets, 100.0000%, with
+V.42/LAPM and no retrains. A 12 000 *arrived at* by offering 14 400, collapsing
+and demoting carries 1.98% and recovers nothing at all from the far end. Same
+rate, same line, same modem, minutes apart. The difference is entirely history.
+
+Two candidate causes were tested to destruction and neither is it.
+
+**It is not the equaliser losing its reference training.** The reference training
+genuinely never ran on a retrain -- the flags are set once in `_Rx.__init__` and
+never cleared, and the log shows the first handshake aligning at symbol 55 and
+training on 8112 symbols while the retrain goes from WAITMT straight to R2 with
+no alignment attempted. Re-arming it was tried in three placements. In
+`to_handshake()` all twelve attempts are spent on the AC/CA states inside half a
+second, before any TRN arrives. On the edge out of S it fires repeatedly and
+training restarts late against a reference that no longer lines up, costing
+12 000 on a flat channel 5530 octets against 3203. At the WAITMT-to-HUNT2
+transition -- the one moment the state machine itself declares TRN is on the
+line -- it works: training runs on every retrain, six times in a call against
+two. **And the rig is unmoved: 1.985% against 1.980%.** The mechanism was real,
+the fix was real, and it was not the cause. Reverted, because on a flat channel
+it costs 2300 octets and buys nothing anywhere.
+
+**It is not the V.42 link being carried across the retrain either.** Keeping it
+was itself a deliberate fix -- dropping it desynchronises the link, measured at
+V(R) = 2 after 181 I frames with 56 retransmissions -- so the obvious refinement
+was to keep it across a same-rate retrain and restart it when the rate changes,
+since 5.4.2's renegotiation is not transparent the way a same-rate retrain is.
+It fires exactly as intended (`rate changed 14400 -> 12000: V.42 starts again`)
+and changes nothing: 1.97% and 2.05% against a 1.98% baseline. Also reverted.
+
+**What it is, narrowed to one layer.** Run the identical failing call with
+`--no-ec`, so the data phase is V.14 and V.42 is never attempted:
+
+| | V.42 on | V.14 only |
+|---|---|---|
+| recovered from the far end | **0 octets** | **78 933 octets** |
+| pattern correct | 1.98% | **91.1%** |
+| eye | -- | median 0.093, **100.0%** inside 0.35 of a point |
+
+The physical layer under a demoted retrain is in excellent health. Every symbol
+is where it should be. The fault is above it, and it is not simply that V.42 was
+kept -- restarting it does not help, and in the runs where it restarts, fails and
+falls back to V.14 the data path is *still* broken, where a call that never
+attempted V.42 at all is fine. So the suspect is what happens to the character
+stream when V.42 has been through a retrain, whether it survives one or not.
+
+`--no-ec` is both the proof and, for now, the workaround: a 14 400 attempt that
+collapses still delivers 91-92% in V.14 instead of 2%.
+
 ### A line we designed ourselves, and the bug it found
 
 Every instrument the rig can offer is now worse than the thing being measured:
