@@ -704,6 +704,38 @@ class StreamRx:
                     e_eq = e_rot * cmath.exp(1j * ph)
                     mu = mu_dd
                     nrm = sum(abs(v) ** 2 for v in eq) + 1e-9
+                    # ---- learn nothing while the gain is known to be wrong ----
+                    # rescale_to() defers its correction until it has enough
+                    # symbols to measure the new constellation's power, and that
+                    # measurement is worth about a factor of five. Every decision
+                    # taken before it lands is against a target the output cannot
+                    # reach, so the error is not an error -- it is the gain step,
+                    # in disguise, driving the taps somewhere they should never
+                    # go. The window is 200 symbols per 32 points, so it is 400
+                    # at 12 000 and 800 at 14 400, and the damage scales with it
+                    # twice over: twice as long to do it in, and half the decision
+                    # margin to do it with. 12 000 survived and came back; 14 400
+                    # locked at a median of 8.8% of the rms radius, on a channel
+                    # with no impairment at all, and stayed there.
+                    #
+                    # fast_err is deliberately still updated: circuit 104 must
+                    # stay clamped through this, and a real error is exactly what
+                    # should keep it clamped. What is suppressed is *learning*
+                    # from it -- the taps, the carrier loop, and the
+                    # loss-of-lock detector, which would otherwise read the
+                    # pending gain step as a channel that had fallen apart and
+                    # call for a retrain.
+                    if self._pend is not None:
+                        fast = self.fast_err + 0.1 * (abs(e_rot) ** 2
+                                                      - self.fast_err)
+                        self.fast_err = fast
+                        out.append(yr)
+                        self.gated += 1
+                        nsym += 1
+                        tau += hstep + adj
+                        drift += adj
+                        n += 1
+                        continue
                     # ---- carrier loop ----
                     e_c = (yr * d.conjugate()).imag / (abs(d) ** 2 + 1e-9)
                     c_freq += ki_c * e_c
