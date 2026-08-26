@@ -131,6 +131,13 @@ def main():
                          "Cirrus advertises this rate and nothing else, so it "
                          "is the only way to pin that modem to a rate, and an "
                          "R1 from us that omits it draws a cleardown")
+    ap.add_argument("--trn", type=int, default=1280,
+                    help="TRN symbols we send. 5.2.3 permits 1280 to 8192 and "
+                         "we have always sent the floor, at every rate. The far "
+                         "end trains its equaliser on this and nothing else, and "
+                         "at 14 400 it has to slice 128 points on an 11%% margin "
+                         "with it -- our own receiver does not care, because it "
+                         "trains on the TRN reference rather than blindly")
     ap.add_argument("--no-factory", action="store_true",
                     help="skip AT&F, leaving the stored profile in place")
     ap.add_argument("--rates", default="4800,7200,9600,12000,14400",
@@ -154,7 +161,8 @@ def main():
         [sys.executable, "-u", "v32answer.py",
          "--seconds", str(a.seconds), "--level", str(a.level),
          "--bis", "--rates", a.rates,
-         "--ec", "--echo", "--send-ascii", "--feed", str(a.feed)],
+         "--ec", "--echo", "--send-ascii", "--feed", str(a.feed),
+         "--trn", str(a.trn)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     out = []
 
