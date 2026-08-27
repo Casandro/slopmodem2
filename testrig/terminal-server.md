@@ -39,11 +39,22 @@ account:
 
 Matching only the first two gives *every* call the same number -- the account
 name -- whatever was dialled, and the first rig test duly routed nowhere and
-answered 404. RFC 3455's `P-Called-Party-ID` is where the extension actually is,
-so `numbers_of()` offers the Request-URI, `To`, `P-Called-Party-ID`, `Diversion`
-and `X-Dialed-Number`, in that order, deduplicated. `termsrv.py --dump-invite`
-prints the whole INVITE, which is how to find out what a given switch offers
-rather than assuming.
+answered 404. RFC 3455's `P-Called-Party-ID` carries the extension here, so
+`numbers_of()` offers the Request-URI, `To`, `P-Called-Party-ID`, `Diversion` and
+`X-Dialed-Number`, in that order, deduplicated. `termsrv.py --dump-invite` prints
+the whole INVITE, which is how to find out what a given switch offers rather than
+assuming.
+
+**This is the box, not a general rule, and the rig cannot test the other case.**
+A FRITZ!Box gives no way to make it address the Request-URI to the dialled
+extension -- it always rewrites to the registered account -- so the
+Request-URI-and-`To` matching that was the original design is exercised by
+`test_termsrv.py` only, never end to end on this hardware. Plenty of switches do
+put the number in the Request-URI, and against one of those the first two sources
+would be the ones that matter and `P-Called-Party-ID` would be absent. That is
+the reason all five sources are tried rather than picking a winner: which header
+carries the number is a property of the switch in front of you, and the rig can
+demonstrate exactly one of the possibilities.
 
 Rules are tried in file order, each against every number, and the first rule
 matching any of them wins -- rules are the outer loop, so an earlier rule
