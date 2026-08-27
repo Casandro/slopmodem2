@@ -16,6 +16,7 @@ Working, against two USB modems (a Conexant CX93010 and a Cirrus CL-MD56xx):
 | **V.14** | asynchronous-to-synchronous conversion |
 | **V.42** | HDLC framing, detection phase, LAPM, XID |
 | echo cancellation | for the hybrid on the far side of the box |
+| terminal server | inbound calls routed by dialled number, bridged to TCP |
 
 Best measured: V.32bis at 12000 trellis coded, carrying V.42 in **both directions
 at once for 83 seconds** — 10 818 bit/s in and 10 789 bit/s out, 90% of the
@@ -49,6 +50,7 @@ were instructive and a couple were expensive:
 | `v42-error-correction.md` | V.42, LAPM, and two modem quirks that are in neither the spec nor the datasheets |
 | `echo-cancellation.md` | why 9600 needed it, and how not to make a clean line worse |
 | `sip-audio-path.md` | the transport, and the 19 dB echo hiding in it |
+| `terminal-server.md` | bridging calls to TCP, and a V.42 wedge it uncovered |
 | `modem.md` | the two modems, their command sets and their disagreements |
 
 ## Not in the repository

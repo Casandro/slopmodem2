@@ -1,0 +1,31 @@
+# Terminal server routing table.
+#
+#   regex            host             port
+#
+# Three whitespace-separated columns. Whitespace is the delimiter because
+# regexes routinely contain commas -- [0-9]{2,3} -- and colons, but almost
+# never spaces. Everything after a # is a comment.
+#
+# The regex is matched with re.fullmatch against the user part of BOTH the
+# Request-URI and the To: header of the inbound INVITE. Rules are tried in
+# file order and the first rule matching either number wins, so put the
+# specific ones first and any catch-all last.
+#
+# fullmatch, not search: 620 does not match **6201. A prefix rule is 620.*
+# and a suffix rule is .*620.
+#
+# A number matching no rule is rejected with 404 Not Found. A malformed line
+# is a startup error rather than a silently skipped rule.
+#
+# Which number is "the dialled number" depends on your switch, and it is worth
+# checking rather than assuming: run termsrv.py --dump-invite and look. A
+# FRITZ!Box rewrites the Request-URI and To to the registered account name and
+# puts the dialled extension only in P-Called-Party-ID, so on this rig every
+# call would otherwise route as the account name no matter what was dialled.
+
+\*\*9              127.0.0.1        2323
+\*\*62[0-9]        127.0.0.1        2323
+\*\*7[0-9]{2,3}    127.0.0.1        23
+
+# A catch-all, if you want one. Without it, unrouted numbers get a 404.
+# .*               127.0.0.1        2000

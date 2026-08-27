@@ -996,6 +996,31 @@ class _Base:
         self._ev("V.42 detection phase begins (%s)"
                  % ("originator" if self.IS_CALLER else "answerer"))
 
+    def force_v14(self, why="the DTE side gave up on V.42"):
+        """Abandon V.42 and run the rest of the data phase on V.14.
+
+        7.2.1.3's fallback is normally decided by the detection phase's T400,
+        but it can also have to be decided later. Detection can conclude LAPM
+        against a V.14-only far end: the answerer matches DC1 with alternating
+        parity against the *scrambled* data-phase stream, and a far modem whose
+        DTE happens to send characters during the 750 ms window produces that
+        pattern by chance. 7.2.1.1 then leaves establishment to the originator,
+        which a V.14 modem will never do, so the session sits in phase 'lapm'
+        with lapm.state 'disconnected' and up False for the rest of the call --
+        put() accepting nothing, received() returning b"" forever, fell_back
+        never set, and no error reported anywhere. Measured soft to soft at
+        9600: zero octets recovered across 1500 frames.
+
+        Nothing calls this from inside v32fsm; it exists so a data-phase owner
+        that can tell the link is dead has a supported way to say so, rather
+        than reaching into _ec_fallback across a module boundary.
+        """
+        if self.ec is None and self.ec_fell_back:
+            return False
+        self._ev("7.2.1.3 forced: %s" % why)
+        self._ec_fallback()
+        return True
+
     def _ec_fallback(self):
         """7.2.1.3: no answer to the detection phase means no error correction.
         The data that was queued has not been sent, so it moves to the V.14
